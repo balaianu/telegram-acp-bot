@@ -291,6 +291,39 @@ it. Every advertisement replaces the previous one, so an agent that gains comman
 you ask for `/cmds`. Commands that need an interactive terminal answer that themselves, for example
 `Command /help requires interactive UI and is not available in ACP.`
 
+## 12. Answer a question the agent asks you
+
+When the agent needs a decision it asks over ACP as an *elicitation*: a form whose fields each list the answers it will
+accept. The bot turns that form into a keyboard in the chat the question came from:
+
+```text
+❓ The agent is asking
+
+Answer Questions
+
+Báo cáo theo
+
+[ Theo danh mục ]  [ Theo tháng ]
+[ ⏭️ Skip this question ]
+```
+
+Tapping an option sends that answer to the agent and the prompt continues from it. A question with several answers
+(multi-select) marks each pick with `✓` as you tap and waits for `✅ Send my answer`, so one response can carry several
+options. `⏭️ Skip this question` declines the elicitation, which lets the agent proceed without an answer instead of
+waiting. A form of two questions arrives as one message listing both prompts and offering both sets of buttons; the
+agent is answered only once every question has a choice.
+
+Two limits to know about:
+
+- Only fields the agent offered as a choice of known options become buttons. A field you would have to type into, or an
+  elicitation that is not a form, is declined so the agent falls back to asking in plain text.
+- The question waits five minutes for a tap and is then cancelled, and the last `ELICITATION_FORMS_MAX` forms are
+  remembered: a button from an older keyboard, or one whose question the agent already stopped waiting for, answers with
+  a toast instead of being sent twice.
+
+The question is sent as its own message rather than into the compact status bubble, because the status line is rewritten
+while the agent works and would overwrite a question nobody has answered yet.
+
 ## Notes
 
 - Session scope is per Telegram chat.
@@ -300,6 +333,7 @@ you ask for `/cmds`. Commands that need an interactive terminal answer that them
 - `/mode` is stored per Telegram chat, so different chats can use different activity modes.
 - `/cmds` shows the slash commands the agent advertised for the current session as tap-to-run buttons; see the how-to
   section above.
+- A question the agent asks over ACP (an elicitation) is offered as tap-to-answer buttons; see the how-to section above.
 
 ## Logging and traceability
 

@@ -10,7 +10,7 @@ import logging
 import mimetypes
 import os
 import signal
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -20,10 +20,17 @@ from uuid import uuid4
 from acp import PROTOCOL_VERSION, connect_to_agent, text_block
 from acp.core import ClientSideConnection
 from acp.schema import (
+    AcceptElicitationResponse,
     AgentCapabilities,
     AllowedOutcome,
+    CancelElicitationResponse,
     ClientCapabilities,
+    CreateElicitationResponse,
+    DeclineElicitationResponse,
     DeniedOutcome,
+    ElicitationCapabilities,
+    ElicitationFormCapabilities,
+    ElicitationMode,
     HttpMcpServer,
     ImageContentBlock,
     Implementation,
@@ -35,11 +42,13 @@ from acp.schema import (
 )
 
 from telegram_acp_bot.acp.client import _AcpClient
+from telegram_acp_bot.acp.elicitation import elicitation_content, elicitation_form, elicitation_questions
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
     AgentCommand,
     AgentOutputLimitExceededError,
     AgentReply,
+    ElicitationRequest,
     FilePayload,
     ImagePayload,
     PermissionDecisionAction,
@@ -60,7 +69,7 @@ from telegram_acp_bot.acp.protocols import (
     SessionLoadNotSupportedError,
     _package_version,
 )
-from telegram_acp_bot.acp.session import _LiveSession, _PendingPermission
+from telegram_acp_bot.acp.session import _LiveSession, _PendingElicitation, _PendingPermission
 from telegram_acp_bot.core.session_registry import SessionRegistry
 from telegram_acp_bot.logging_context import bind_log_context, log_text_preview
 from telegram_acp_bot.mcp.state import (
@@ -136,6 +145,8 @@ class AcpAgentService:
         self._commands_by_session: dict[str, tuple[AgentCommand, ...]] = {}
         self._pending_permissions: dict[str, _PendingPermission] = {}
         self._permission_prompt_handler: Callable[[PermissionRequest], Awaitable[None]] | None = None
+        self._pending_elicitations: dict[str, _PendingElicitation] = {}
+        self._elicitation_prompt_handler: Callable[[ElicitationRequest], Awaitable[None]] | None = None
         self._activity_event_handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None = None
         self._channel_state_lock = asyncio.Lock()
 
@@ -346,6 +357,12 @@ class AcpAgentService:
             if not pending.future.done():
                 pending.future.set_result(RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled")))
 
+        stale = [request_id for request_id, pending in self._pending_elicitations.items() if pending.chat_id == chat_id]
+        for request_id in stale:
+            pending = self._pending_elicitations.pop(request_id)
+            if not pending.future.done():
+                pending.future.set_result(CancelElicitationResponse(action="cancel"))
+
         await self._shutdown(live.process)
         self._registry.clear(chat_id)
         self._chat_by_session.pop(live.acp_session_id, None)
@@ -391,6 +408,12 @@ class AcpAgentService:
         handler: Callable[[PermissionRequest], Awaitable[None]] | None,
     ) -> None:
         self._permission_prompt_handler = handler
+
+    def set_elicitation_request_handler(
+        self,
+        handler: Callable[[ElicitationRequest], Awaitable[None]] | None,
+    ) -> None:
+        self._elicitation_prompt_handler = handler
 
     def set_activity_event_handler(
         self,
@@ -442,6 +465,61 @@ class AcpAgentService:
             logger.info("Permission response accepted: request_id=%s chat_id=%s action=%s", request_id, chat_id, action)
         pending.future.set_result(response)
         return True
+
+    async def respond_elicitation_request(
+        self,
+        *,
+        chat_id: int,
+        request_id: str,
+        answers: Mapping[str, tuple[str, ...]] | None,
+    ) -> bool:
+        """Resolve one pending elicitation: tap answers accept, `None` declines."""
+        pending = self._pending_elicitations.get(request_id)
+        if pending is None or pending.chat_id != chat_id or pending.future.done():
+            with bind_log_context(chat_id=chat_id):
+                logger.warning(
+                    "Elicitation response ignored: request_id=%s chat_id=%s pending=%s",
+                    request_id,
+                    chat_id,
+                    pending is not None,
+                )
+            return False
+
+        if answers is None:
+            response: CreateElicitationResponse = DeclineElicitationResponse(action="decline")
+            summary = "declined"
+        else:
+            content = self._elicitation_content(pending=pending, answers=answers)
+            if content is None:
+                response = DeclineElicitationResponse(action="decline")
+                summary = "incomplete"
+                with bind_log_context(chat_id=chat_id, session_id=pending.acp_session_id):
+                    logger.warning("Elicitation response rejected: incomplete answers request_id=%s", request_id)
+            else:
+                response = AcceptElicitationResponse(action="accept", content=content)
+                summary = ",".join(f"{field}={'|'.join(values)}" for field, values in sorted(answers.items()))
+        with bind_log_context(chat_id=chat_id, session_id=pending.acp_session_id):
+            logger.info("Elicitation resolved: request_id=%s answers=%s", request_id, summary)
+        pending.future.set_result(response)
+        return True
+
+    @staticmethod
+    def _elicitation_content(
+        *,
+        pending: _PendingElicitation,
+        answers: Mapping[str, tuple[str, ...]],
+    ) -> dict[str, object] | None:
+        """Validate the taps against the declared options, or None when they do not answer the form."""
+        for question in pending.questions:
+            values = answers.get(question.field)
+            if not values:
+                return None
+            allowed = {option.value for option in question.options}
+            if any(value not in allowed for value in values):
+                return None
+            if not question.multiple and len(values) > 1:
+                return None
+        return elicitation_content(pending.questions, answers)
 
     async def _shutdown(self, process: ProcessLike) -> None:
         if process.returncode is not None:
@@ -497,6 +575,7 @@ class AcpAgentService:
 
         client = _AcpClient(
             permission_decider=self._decide_permission,
+            elicitation_decider=self._decide_elicitation,
             event_reporter=self._report_permission_event,
             activity_reporter=self._forward_activity_event,
             commands_reporter=self._store_available_commands,
@@ -508,7 +587,9 @@ class AcpAgentService:
             initialized = await asyncio.wait_for(
                 connection.initialize(
                     protocol_version=PROTOCOL_VERSION,
-                    client_capabilities=ClientCapabilities(),
+                    client_capabilities=ClientCapabilities(
+                        elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities()),
+                    ),
                     client_info=Implementation(
                         name="telegram-acp-bot",
                         title="Telegram ACP Bot",
@@ -640,6 +721,57 @@ class AcpAgentService:
             return response
 
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+    async def _decide_elicitation(self, message: str, mode: ElicitationMode) -> CreateElicitationResponse:
+        """Turn the agent's structured question into tap-able choices and wait for the user."""
+        form = elicitation_form(mode)
+        if form is None:
+            return CancelElicitationResponse(action="cancel")
+
+        session_id = form.session_id
+        questions = elicitation_questions(form.requested_schema)
+        if questions is None:
+            with bind_log_context(session_id=session_id):
+                logger.info("Elicitation unsupported: session_id=%s message=%s", session_id, log_text_preview(message))
+            return CancelElicitationResponse(action="cancel")
+
+        chat_id = self._chat_by_session.get(session_id)
+        if chat_id is None:
+            return CancelElicitationResponse(action="cancel")
+
+        request_id = uuid4().hex[:12]
+        future: asyncio.Future[CreateElicitationResponse] = asyncio.get_running_loop().create_future()
+        pending = _PendingElicitation(
+            request_id=request_id,
+            chat_id=chat_id,
+            acp_session_id=session_id,
+            message=message,
+            questions=questions,
+            future=future,
+        )
+        self._pending_elicitations[request_id] = pending
+        handler = self._elicitation_prompt_handler
+        if handler is None:
+            self._pending_elicitations.pop(request_id, None)
+            return CancelElicitationResponse(action="cancel")
+
+        with bind_log_context(chat_id=chat_id, session_id=session_id):
+            logger.info("Elicitation requested: request_id=%s questions=%s", request_id, len(questions))
+        await handler(
+            ElicitationRequest(
+                chat_id=chat_id,
+                request_id=request_id,
+                title=form.requested_schema.title or message,
+                questions=questions,
+            )
+        )
+        try:
+            response = await asyncio.wait_for(future, timeout=300)
+        except TimeoutError:
+            response = CancelElicitationResponse(action="cancel")
+        finally:
+            self._pending_elicitations.pop(request_id, None)
+        return response
 
     @staticmethod
     def _available_actions(options: tuple[PermissionOption, ...]) -> tuple[PermissionDecisionAction, ...]:

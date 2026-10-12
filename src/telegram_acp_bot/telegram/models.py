@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -13,6 +13,7 @@ from telegram import Update
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
     AgentReply,
+    ElicitationRequest,
     PermissionDecisionAction,
     PermissionMode,
     PermissionPolicy,
@@ -137,6 +138,19 @@ class AgentService(Protocol):
         self,
         handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None,
     ) -> None: ...
+
+    def set_elicitation_request_handler(
+        self,
+        handler: Callable[[ElicitationRequest], Awaitable[None]] | None,
+    ) -> None: ...
+
+    async def respond_elicitation_request(
+        self,
+        *,
+        chat_id: int,
+        request_id: str,
+        answers: Mapping[str, tuple[str, ...]] | None,
+    ) -> bool: ...
 
     async def respond_permission_request(
         self,

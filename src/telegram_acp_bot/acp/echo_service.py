@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
     AgentReply,
+    ElicitationRequest,
     PermissionDecisionAction,
     PermissionMode,
     PermissionPolicy,
@@ -154,6 +155,22 @@ class EchoAgentService:
         handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None,
     ) -> None:
         self._activity_event_handler = handler
+
+    def set_elicitation_request_handler(
+        self,
+        handler: Callable[[ElicitationRequest], Awaitable[None]] | None,
+    ) -> None:
+        del handler
+
+    async def respond_elicitation_request(
+        self,
+        *,
+        chat_id: int,
+        request_id: str,
+        answers: Mapping[str, tuple[str, ...]] | None,
+    ) -> bool:
+        del chat_id, request_id, answers
+        return False
 
     async def respond_permission_request(
         self,

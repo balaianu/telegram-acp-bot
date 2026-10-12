@@ -6,7 +6,7 @@ import asyncio
 import base64
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -45,6 +45,9 @@ from telegram_acp_bot.acp.models import (
     AgentCommand,
     AgentOutputLimitExceededError,
     AgentReply,
+    ElicitationOption,
+    ElicitationQuestion,
+    ElicitationRequest,
     FilePayload,
     ImagePayload,
     PermissionDecisionAction,
@@ -85,6 +88,16 @@ from telegram_acp_bot.telegram.constants import (
     BUSY_STILL_QUEUED_TEXT,
     COMPACT_STATUS_HINT_CHARS,
     COMPACT_STATUS_TICK_SECONDS,
+    ELICITATION_CALLBACK_PARTS,
+    ELICITATION_CALLBACK_PREFIX,
+    ELICITATION_FORMS_MAX,
+    ELICITATION_KEYBOARD_COLUMNS,
+    ELICITATION_OPTION_LABEL_CHARS,
+    ELICITATION_SELECTED_PREFIX,
+    ELICITATION_SKIP_LABEL,
+    ELICITATION_SKIP_TOKEN,
+    ELICITATION_SUBMIT_LABEL,
+    ELICITATION_SUBMIT_TOKEN,
     KIND_LABELS,
     MAX_RESTART_ARGS,
     MAX_RESUME_ARGS,
@@ -257,6 +270,10 @@ class TelegramBridge:
         # Background task that paints the current label onto the single status message per chat.
         self._compact_status_tasks: dict[int, asyncio.Task[None]] = {}
         self._suppressed_activity_chats: set[int] = set()
+        # Form the bot offered per pending elicitation, so a later tap can re-render the same keyboard.
+        self._elicitation_forms: dict[str, ElicitationRequest] = {}
+        # Option indexes chosen per pending elicitation, keyed by the schema field being answered.
+        self._elicitation_selections: dict[str, dict[str, list[int]]] = {}
         self._status_reactions = StatusReactionSender(config.status_reactions)
         self._activity_handlers: dict[ActivityMode, _ActivityModeHandler] = {
             "normal": _NormalActivityModeHandler(self),
@@ -267,6 +284,8 @@ class TelegramBridge:
             self._agent_service.set_permission_request_handler(self.on_permission_request)
         if hasattr(self._agent_service, "set_activity_event_handler"):
             self._agent_service.set_activity_event_handler(self.on_activity_event)
+        if hasattr(self._agent_service, "set_elicitation_request_handler"):
+            self._agent_service.set_elicitation_request_handler(self.on_elicitation_request)
 
     def install(self, app: Application) -> None:
         self._app = app
@@ -292,6 +311,7 @@ class TelegramBridge:
         app.add_handler(CallbackQueryHandler(self.on_scheduled_callback, pattern=r"^scheduled\|"))
         app.add_handler(CallbackQueryHandler(self.on_busy_callback, pattern=r"^busy\|"))
         app.add_handler(CallbackQueryHandler(self.on_agent_command_callback, pattern=r"^cmd\|"))
+        app.add_handler(CallbackQueryHandler(self.on_elicitation_callback, pattern=r"^ask\|"))
         app.add_handler(MessageHandler(_AGENT_COMMAND, self.on_agent_command))
         app.add_handler(
             MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~_AGENT_COMMAND, self.on_message)
@@ -732,6 +752,188 @@ class TelegramBridge:
         await self._reply(update, self._format_restart_response(session_id=session_id, workspace=workspace))
         self._restart_requested = True
         self._app.stop_running()
+
+    async def on_elicitation_request(self, request: ElicitationRequest) -> None:
+        """Offer the agent's structured question as tap-able choices in the chat it came from."""
+        if self._app is None:
+            return
+
+        self._remember_elicitation_form(request)
+        sent = await self._send_markdown_to_chat(
+            bot=self._app.bot,
+            chat_id=request.chat_id,
+            text=self._format_elicitation_text(request),
+            reply_markup=self._elicitation_keyboard(request, selections={}),
+        )
+        with bind_log_context(chat_id=request.chat_id):
+            logger.info(
+                "Elicitation offered: request_id=%s questions=%s message_id=%s",
+                request.request_id,
+                len(request.questions),
+                getattr(sent, "message_id", None),
+            )
+
+    async def on_elicitation_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        query = update.callback_query
+        if query is None:
+            return
+        try:
+            if not await self._require_access(update):
+                await query.answer("Access denied.")
+                return
+
+            parts = (query.data or "").split("|", maxsplit=ELICITATION_CALLBACK_PARTS - 1)
+            if len(parts) != ELICITATION_CALLBACK_PARTS:
+                await query.answer("Invalid action.")
+                return
+            form = self._elicitation_forms.get(parts[1])
+            if form is None:
+                await query.answer("This question is no longer waiting for an answer.")
+                return
+            await self._take_elicitation_choice(form=form, token=parts[2], query=query)
+        except Exception:
+            logger.exception("Unhandled error while processing elicitation callback")
+            await query.answer("Answering this question failed.")
+
+    async def _take_elicitation_choice(self, *, form: ElicitationRequest, token: str, query: CallbackQuery) -> None:
+        """Apply one button of an offered form: skip, submit the picks, or record a tap."""
+        if token == ELICITATION_SKIP_TOKEN:
+            await self._resolve_elicitation(form, answers=None, query=query, toast="Skipped.")
+            return
+        if token == ELICITATION_SUBMIT_TOKEN:
+            submitted = self._elicitation_answers(form, final=True)
+            if submitted is None:
+                await query.answer("Pick at least one option for every question.")
+                return
+            await self._resolve_elicitation(form, answers=submitted, query=query, toast="Answer sent.")
+            return
+
+        if not self._record_elicitation_tap(form=form, token=token):
+            await query.answer("That option is no longer available.")
+            return
+        answers = self._elicitation_answers(form)
+        if answers is None:
+            await query.edit_message_reply_markup(reply_markup=self._elicitation_keyboard(form))
+            await query.answer("Pick every answer, then tap Send my answer.")
+            return
+        await self._resolve_elicitation(form, answers=answers, query=query, toast="Answer sent.")
+
+    def _remember_elicitation_form(self, request: ElicitationRequest) -> None:
+        """Keep the offered form so a later tap can re-render the same keyboard."""
+        self._elicitation_forms[request.request_id] = request
+        self._elicitation_selections[request.request_id] = {}
+        for request_id in list(self._elicitation_forms)[:-ELICITATION_FORMS_MAX]:
+            self._forget_elicitation(request_id)
+
+    def _forget_elicitation(self, request_id: str) -> None:
+        self._elicitation_forms.pop(request_id, None)
+        self._elicitation_selections.pop(request_id, None)
+
+    @staticmethod
+    def _format_elicitation_text(request: ElicitationRequest) -> str:
+        numbered = len(request.questions) > 1
+        lines = ["*❓ The agent is asking*", request.title]
+        for index, question in enumerate(request.questions, start=1):
+            prefix = f"{index}. " if numbered else ""
+            suffix = " _(pick one or more)_" if question.multiple else ""
+            lines.append(f"{prefix}{question.prompt}{suffix}")
+        return "\n\n".join(lines)
+
+    def _elicitation_keyboard(
+        self,
+        request: ElicitationRequest,
+        *,
+        selections: Mapping[str, list[int]] | None = None,
+    ) -> InlineKeyboardMarkup:
+        chosen = selections if selections is not None else self._elicitation_selections.get(request.request_id, {})
+        rows: list[list[InlineKeyboardButton]] = []
+        for question_index, question in enumerate(request.questions):
+            picked = chosen.get(question.field, ())
+            buttons: list[InlineKeyboardButton] = []
+            for option_index, option in enumerate(question.options):
+                label = self._elicitation_button_label(question, option, selected=option_index in picked)
+                callback_data = f"{ELICITATION_CALLBACK_PREFIX}|{request.request_id}|{question_index}.{option_index}"
+                buttons.append(InlineKeyboardButton(text=label, callback_data=callback_data))
+                if len(buttons) >= ELICITATION_KEYBOARD_COLUMNS:
+                    rows.append(buttons)
+                    buttons = []
+            if buttons:
+                rows.append(buttons)
+        if any(question.multiple for question in request.questions):
+            submit_data = f"{ELICITATION_CALLBACK_PREFIX}|{request.request_id}|{ELICITATION_SUBMIT_TOKEN}"
+            rows.append([InlineKeyboardButton(text=ELICITATION_SUBMIT_LABEL, callback_data=submit_data)])
+        skip_data = f"{ELICITATION_CALLBACK_PREFIX}|{request.request_id}|{ELICITATION_SKIP_TOKEN}"
+        rows.append([InlineKeyboardButton(text=ELICITATION_SKIP_LABEL, callback_data=skip_data)])
+        return InlineKeyboardMarkup(rows)
+
+    @staticmethod
+    def _elicitation_button_label(question: ElicitationQuestion, option: ElicitationOption, *, selected: bool) -> str:
+        label = (option.label or option.value)[:ELICITATION_OPTION_LABEL_CHARS]
+        if question.multiple and selected:
+            return f"{ELICITATION_SELECTED_PREFIX}{label}"
+        return label
+
+    def _record_elicitation_tap(self, *, form: ElicitationRequest, token: str) -> bool:
+        """Apply one tap to the pending selections, or report that it names no offered option."""
+        question_part, _, option_part = token.partition(".")
+        if not question_part.isdigit() or not option_part.isdigit():
+            return False
+        if not 0 <= int(question_part) < len(form.questions):
+            return False
+        question = form.questions[int(question_part)]
+        if not 0 <= int(option_part) < len(question.options):
+            return False
+        selected = int(option_part)
+        choices = self._elicitation_selections.setdefault(form.request_id, {})
+        current = choices.get(question.field, [])
+        if question.multiple:
+            if selected in current:
+                current.remove(selected)
+            else:
+                current.append(selected)
+        else:
+            current = [selected]
+        choices[question.field] = current
+        return True
+
+    def _elicitation_answers(
+        self,
+        form: ElicitationRequest,
+        *,
+        final: bool = False,
+    ) -> Mapping[str, tuple[str, ...]] | None:
+        """The tap answers, or None while the form still needs a choice or an explicit submit."""
+        choices = self._elicitation_selections.get(form.request_id, {})
+        answers: dict[str, tuple[str, ...]] = {}
+        for question in form.questions:
+            selected = choices.get(question.field, ())
+            if not selected or (question.multiple and not final):
+                return None
+            answers[question.field] = tuple(question.options[index].value for index in selected)
+        return answers
+
+    async def _resolve_elicitation(
+        self,
+        form: ElicitationRequest,
+        *,
+        answers: Mapping[str, tuple[str, ...]] | None,
+        query: CallbackQuery,
+        toast: str,
+    ) -> None:
+        accepted = await self._agent_service.respond_elicitation_request(
+            chat_id=form.chat_id,
+            request_id=form.request_id,
+            answers=answers,
+        )
+        self._forget_elicitation(form.request_id)
+        if not accepted:
+            with bind_log_context(chat_id=form.chat_id):
+                logger.warning("Elicitation response expired: request_id=%s", form.request_id)
+            await query.answer("This question is no longer waiting for an answer.")
+            return
+        await query.answer(toast)
+        await query.edit_message_reply_markup(reply_markup=None)
 
     async def on_permission_request(self, request: PermissionRequest) -> None:
         if self._app is None:

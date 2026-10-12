@@ -102,6 +102,16 @@ async def test_permission_handler_and_response_are_noop() -> None:
     assert await service.respond_permission_request(chat_id=1, request_id="x", action="deny") is False
 
 
+async def test_elicitation_handler_and_response_are_noop() -> None:
+    service = EchoAgentService(SessionRegistry())
+
+    async def handler(request):
+        del request
+
+    service.set_elicitation_request_handler(handler)
+    assert await service.respond_elicitation_request(chat_id=1, request_id="x", answers=None) is False
+
+
 async def test_new_session_rejects_file_workspace(tmp_path: Path) -> None:
     service = EchoAgentService(SessionRegistry())
     invalid = tmp_path / "file.txt"

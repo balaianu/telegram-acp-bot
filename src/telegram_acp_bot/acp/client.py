@@ -14,7 +14,10 @@ from acp.schema import (
     AvailableCommand,
     AvailableCommandsUpdate,
     BlobResourceContents,
+    CancelElicitationResponse,
+    CreateElicitationResponse,
     CreateTerminalResponse,
+    ElicitationMode,
     EmbeddedResourceContentBlock,
     EnvVariable,
     ImageContentBlock,
@@ -69,11 +72,13 @@ class _AcpClient:
         self,
         *,
         permission_decider: Callable[[str, list[PermissionOption], ToolCall], Awaitable[RequestPermissionResponse]],
+        elicitation_decider: Callable[[str, ElicitationMode], Awaitable[CreateElicitationResponse]] | None = None,
         event_reporter: Callable[[str, str], None] | None = None,
         activity_reporter: Callable[[str, AgentActivityBlock], Awaitable[None]] | None = None,
         commands_reporter: Callable[[str, tuple[AgentCommand, ...]], Awaitable[None]] | None = None,
     ) -> None:
         self._permission_decider = permission_decider
+        self._elicitation_decider = elicitation_decider
         self._event_reporter = event_reporter
         self._activity_reporter = activity_reporter
         self._commands_reporter = commands_reporter
@@ -115,6 +120,14 @@ class _AcpClient:
             f"permission requested for {tool_call.title} ({tool_call.tool_call_id}), options={len(options)}",
         )
         return await self._permission_decider(session_id, options, tool_call)
+
+    async def create_elicitation(
+        self, message: str, mode: ElicitationMode, **kwargs: object
+    ) -> CreateElicitationResponse:
+        del kwargs
+        if self._elicitation_decider is None:
+            return CancelElicitationResponse(action="cancel")
+        return await self._elicitation_decider(message, mode)
 
     async def session_update(
         self,
