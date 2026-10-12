@@ -29,6 +29,11 @@ The bot entrypoint is `telegram-acp-bot`.
   `@` prefix is optional; values are normalized to lowercase.
   At least one allowlist entry is required across IDs/usernames.
 
+- `--group-require-mention`
+  Default: {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION`.
+  Flag: when set, group messages are answered only if they `@mention` the bot or reply to
+  one of its messages. Private chats are unaffected.
+
 - `--workspace`
   Default workspace used by `/new` when no workspace path is provided.
 

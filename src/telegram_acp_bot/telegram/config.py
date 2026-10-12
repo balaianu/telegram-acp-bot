@@ -18,6 +18,7 @@ class BotConfig:
     default_workspace: Path
     activity_mode: ActivityMode = "normal"
     schedule_languages: tuple[str, ...] = ("en", "es")
+    group_require_mention: bool = False
 
     @property
     def compact_activity(self) -> bool:
@@ -33,6 +34,7 @@ def make_config(  # noqa: PLR0913
     activity_mode: ActivityMode = "normal",
     compact_activity: bool | None = None,
     schedule_languages: list[str] | None = None,
+    group_require_mention: bool = False,
 ) -> BotConfig:
     normalized_usernames = {
         username.lstrip("@").strip().lower() for username in (allowed_usernames or []) if username.strip()
@@ -49,4 +51,5 @@ def make_config(  # noqa: PLR0913
         default_workspace=Path(workspace).expanduser(),
         activity_mode=activity_mode,
         schedule_languages=normalized_schedule_languages,
+        group_require_mention=group_require_mention,
     )

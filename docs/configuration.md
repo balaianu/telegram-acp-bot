@@ -36,7 +36,8 @@ The file must be a JSON object. All keys are optional. Missing keys fall back to
     "bot_token": "123456:abc",
     "allowed_user_ids": [123456789],
     "allowed_usernames": ["alice", "@bob"],
-    "schedule_languages": ["en", "es"]
+    "schedule_languages": ["en", "es"],
+    "group_require_mention": true
   },
   "acp": {
     "agent_command": "npx @zed-industries/codex-acp",
@@ -79,6 +80,12 @@ ACP_SCHEDULE_LANGUAGES
   Comma-separated language codes used when parsing natural-language `/schedule` times.
   Default: `en,es`.
   Example: `es,en`.
+
+ACP_TELEGRAM_GROUP_REQUIRE_MENTION
+  Truthy values (`1`, `true`, `yes`, `on`) restrict the bot to `@mentions` in group chats.
+  Messages that neither mention the bot nor reply to one of its messages are ignored;
+  private chats are always answered. Equivalent to `--group-require-mention`.
+  Default: unset, so group chats answer every allowed sender.
 
 ACP_AGENT_COMMAND
   Command line used to launch the ACP agent process.
@@ -150,6 +157,7 @@ Key flags that map to config file or environment variable equivalents:
 | `--allowed-user-id` | `TELEGRAM_ALLOWED_USER_IDS` | `telegram.allowed_user_ids` |
 | `--allowed-username` | `TELEGRAM_ALLOWED_USERNAMES` | `telegram.allowed_usernames` |
 | `--schedule-language` | `ACP_SCHEDULE_LANGUAGES` | `telegram.schedule_languages` |
+| `--group-require-mention` | `ACP_TELEGRAM_GROUP_REQUIRE_MENTION` | `telegram.group_require_mention` |
 | `--agent-command` | `ACP_AGENT_COMMAND` | `acp.agent_command` |
 | `--restart-command` | `ACP_RESTART_COMMAND` | `acp.restart_command` |
 | `--permission-mode` | `ACP_PERMISSION_MODE` | `acp.permission_mode` |

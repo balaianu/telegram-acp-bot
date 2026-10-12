@@ -81,7 +81,7 @@ class DummyCancelBoomError(RuntimeError):
 
 
 class DummyMessage:
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         text: str | None = None,
         *,
@@ -89,12 +89,18 @@ class DummyMessage:
         caption: str | None = None,
         photo: Sequence[object] | None = None,
         document: object | None = None,
+        entities: Sequence[MessageEntity] | None = None,
+        caption_entities: Sequence[MessageEntity] | None = None,
+        reply_to_message: object | None = None,
     ) -> None:
         self.message_id = message_id
         self.text = text
         self.caption = caption
         self.photo = list(photo) if photo is not None else []
         self.document = document
+        self.entities = list(entities) if entities is not None else []
+        self.caption_entities = list(caption_entities) if caption_entities is not None else []
+        self.reply_to_message = reply_to_message
         self._next_reply_message_id = message_id + 1
         self.replies: list[str] = []
         self.reply_kwargs: list[dict[str, object]] = []
@@ -133,6 +139,7 @@ class DummyDownloadedFile:
 
 class DummyBot:
     def __init__(self) -> None:
+        self.username = "echo_bot"
         self.actions: list[tuple[int, str]] = []
         self.files: dict[str, bytes] = {}
         self.sent_messages: list[dict[str, object]] = []
@@ -532,15 +539,28 @@ def make_update(  # noqa: PLR0913
     document: object | None = None,
     message_id: int = 1,
     with_message: bool = True,
+    chat_type: str = "private",
+    entities: Sequence[MessageEntity] | None = None,
+    caption_entities: Sequence[MessageEntity] | None = None,
+    reply_to_message: object | None = None,
 ):
     message = (
-        DummyMessage(text, message_id=message_id, caption=caption, photo=photo, document=document)
+        DummyMessage(
+            text,
+            message_id=message_id,
+            caption=caption,
+            photo=photo,
+            document=document,
+            entities=entities,
+            caption_entities=caption_entities,
+            reply_to_message=reply_to_message,
+        )
         if with_message
         else None
     )
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id, username=username),
-        effective_chat=SimpleNamespace(id=chat_id),
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
         message=message,
     )
 
@@ -549,8 +569,13 @@ def make_context(*, args: list[str] | None = None, application: object | None = 
     return SimpleNamespace(args=args or [], bot=DummyBot(), application=application)
 
 
-def make_bridge(*, allowed_ids: set[int] | None = None) -> TelegramBridge:
-    config = make_config(token="TOKEN", allowed_user_ids=list(allowed_ids or set()), workspace=".")
+def make_bridge(*, allowed_ids: set[int] | None = None, group_require_mention: bool = False) -> TelegramBridge:
+    config = make_config(
+        token="TOKEN",
+        allowed_user_ids=list(allowed_ids or set()),
+        workspace=".",
+        group_require_mention=group_require_mention,
+    )
     return TelegramBridge(config=config, agent_service=EchoAgentService(SessionRegistry()))
 
 

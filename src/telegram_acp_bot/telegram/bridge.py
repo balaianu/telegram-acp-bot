@@ -108,6 +108,17 @@ SCHEDULED_MISSING_ANCHOR_ERROR = "scheduled task is missing an anchor message"
 SCHEDULED_TASK_PREVIEW_MAX_CHARS = 72
 SCHEDULE_COMMAND_MIN_ARGS = 2
 _SCHEDULE_DELAY_RE = re.compile(r"^(\d+)(s|m|h|d)$", re.IGNORECASE)
+GROUP_CHAT_TYPES = frozenset({"group", "supergroup"})
+
+
+def _text_mentions_handle(text: str | None, entities: tuple[MessageEntity, ...] | None, handle: str) -> bool:
+    lowered = (text or "").lower()
+    if handle in lowered:
+        return True
+    return any(
+        entity.type == "mention" and lowered[entity.offset : entity.offset + entity.length] == handle
+        for entity in entities or ()
+    )
 
 
 class TelegramBridge:
@@ -845,6 +856,9 @@ class TelegramBridge:
         if not await self._require_access(update):
             return
 
+        if self._config.group_require_mention and self._ignores_unmentioned_group_message(update, context):
+            return
+
         prompt_input = await self._prompt_input(update=update, context=context)
         if prompt_input is None:
             return
@@ -1423,6 +1437,33 @@ class TelegramBridge:
 
         await self._reply(update, "Access denied for this bot.")
         return False
+
+    def _ignores_unmentioned_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """True when a group message must be skipped because it does not target the bot.
+
+        Implements {py:attr}`BotConfig.group_require_mention`: private chats always answer,
+        group chats only when the bot is @mentioned (or the message replies to the bot).
+        """
+        chat = update.effective_chat
+        if getattr(chat, "type", None) not in GROUP_CHAT_TYPES:
+            return False
+
+        message = update.message
+        username = getattr(getattr(context, "bot", None), "username", None) or ""
+        handle = username.lstrip("@").strip().lower()
+        if message is not None and handle:
+            if _text_mentions_handle(message.text, getattr(message, "entities", None), handle):
+                return False
+            if _text_mentions_handle(message.caption, getattr(message, "caption_entities", None), handle):
+                return False
+            author = getattr(message.reply_to_message, "from_user", None)
+            replied_username = getattr(author, "username", None) or ""
+            if replied_username.lstrip("@").strip().lower() == handle:
+                return False
+
+        chat_id = chat.id if chat is not None else None
+        logger.info("Group message in chat=%s ignored: no @%s mention", chat_id, handle)
+        return True
 
     @staticmethod
     def _chat_id(update: Update) -> int:

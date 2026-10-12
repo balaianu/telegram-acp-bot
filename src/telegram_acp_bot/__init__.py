@@ -37,6 +37,8 @@ from telegram_acp_bot.telegram.bot import RESTART_EXIT_CODE, BotConfig, Telegram
 ALLOWED_USER_IDS_ENV = "TELEGRAM_ALLOWED_USER_IDS"
 ALLOWED_USERNAMES_ENV = "TELEGRAM_ALLOWED_USERNAMES"
 SCHEDULE_LANGUAGES_ENV = "ACP_SCHEDULE_LANGUAGES"
+GROUP_REQUIRE_MENTION_ENV = "ACP_TELEGRAM_GROUP_REQUIRE_MENTION"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 def get_version() -> str:
@@ -142,6 +144,16 @@ def get_parser() -> argparse.ArgumentParser:
             "'compact' collapses all intermediate events into a single in-place status message "
             "that is replaced by the final answer when the agent responds. "
             "'verbose' streams append-only updates for active reply and tool activity."
+        ),
+    )
+    parser.add_argument(
+        "--group-require-mention",
+        action="store_true",
+        default=_env_flag(GROUP_REQUIRE_MENTION_ENV),
+        help=(
+            "Ignore group messages that do not @mention the bot (or reply to one of its messages). "
+            "Private chats are always answered. Also enabled by a truthy "
+            f"{GROUP_REQUIRE_MENTION_ENV}."
         ),
     )
     parser.add_argument(
@@ -253,6 +265,10 @@ def _set_parser_defaults(parser: argparse.ArgumentParser, updates: dict[str, obj
 
 def _parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in _TRUE_VALUES
 
 
 def _normalize_username(username: str) -> str:
@@ -426,6 +442,9 @@ def main(args: list[str] | None = None) -> int:
         parser.error("--acp-connect-timeout must be a positive number")
     allowed_user_ids, allowed_usernames = _resolve_allowed_users(parser=parser, opts=opts, config_data=config_data)
     schedule_languages = _resolve_schedule_languages(opts=opts, config_data=config_data)
+    group_require_mention = opts.group_require_mention or bool(
+        config_data.get("telegram", {}).get("group_require_mention", False)
+    )
 
     command_parts = shlex.split(opts.agent_command)
     if not command_parts:
@@ -447,6 +466,7 @@ def main(args: list[str] | None = None) -> int:
         workspace=opts.workspace,
         activity_mode=cast(ActivityMode, opts.activity_mode),
         schedule_languages=schedule_languages,
+        group_require_mention=group_require_mention,
     )
     service = AcpAgentService(
         SessionRegistry(),
