@@ -134,7 +134,9 @@ def _media_references(message: Message) -> tuple[tuple[str, str | None], ...]:
 
 PENDING_MEDIA_HEADER = (
     "Pending Telegram attachments (not downloaded yet). "
-    "Call telegram_fetch_attachment with a file_id when you actually need one:"
+    "Call telegram_fetch_attachment with a file_id when you actually need one. "
+    "Telegram keeps a media file downloadable for roughly an hour after it arrives, "
+    "so fetch the ones you need now:"
 )
 
 
@@ -144,7 +146,11 @@ def _with_pending_media(text: str, refs: tuple[dict[str, object], ...]) -> str:
     if not refs:
         return text
     lines = [PENDING_MEDIA_HEADER]
-    lines.extend(f"- file_id={ref['file_id']} message_id={ref['message_id']} mime={ref['mime_type']}" for ref in refs)
+    lines.extend(
+        f"- file_id={ref['file_id']} message_id={ref['message_id']} "
+        f"mime={ref['mime_type']} queued_at={ref['queued_at']}"
+        for ref in refs
+    )
     notice = "\n".join(lines)
     return f"{notice}\n\n{text}" if text else notice
 

@@ -108,6 +108,8 @@ telegram_fetch_attachment(
 
 The download lands inside the agent workspace, by default under `.telegram-media/`, and the result reports the local `path`. Pass `dest` to choose a meaningful name such as `invoices/hoa-don.pdf`; a `dest` that resolves outside the workspace is rejected. Queued references are announced once and capped per chat, so a long run of unmentioned photos cannot grow the state file without bound.
 
+A queued reference is a promise with a shelf life, not an archive. Telegram keeps a media file downloadable by the bot for roughly an hour after it last moved through the API, and the hosted Bot API refuses downloads of files larger than 20 MB. The announcement therefore carries the `queued_at` timestamp of each reference so the agent can judge how stale it is, and a fetch that arrives after the window returns an explicit `download failed` error naming the `file_id`. If a photo matters later than that, ask the sender to post it again.
+
 (mcp-feature-reactions)=
 ## React To Messages
 

@@ -10,6 +10,9 @@ from tests.telegram.support import *
 PHOTO_FILE_ID = "AGAC_photo_file_id_value"
 DOCUMENT_FILE_ID = "BQAC_document_file_id_value"
 EXPECTED_ECHO_SUFFIX = "alo"
+PHOTO_MESSAGE_ID = 7
+DOCUMENT_MESSAGE_ID = 8
+QUEUED_REFERENCE_LINES = 2
 
 
 def assert_not_answered(update) -> None:
@@ -80,6 +83,30 @@ async def test_queued_media_is_announced_on_the_next_mentioned_prompt():
     reply = update.message.replies[-1]
     assert PENDING_MEDIA_HEADER in reply
     assert f"file_id={PHOTO_FILE_ID}" in reply
+    assert "queued_at=echo" in reply
+    assert service._pending_media.get(100, []) == []
+
+
+async def test_pending_media_announcement_lists_every_queued_reference():
+    bridge, service = make_media_bridge()
+    await start_session(bridge)
+    for media in (
+        make_update(chat_type="group", photo=[SimpleNamespace(file_id=PHOTO_FILE_ID)], message_id=PHOTO_MESSAGE_ID),
+        make_update(
+            chat_type="group",
+            document=SimpleNamespace(file_id=DOCUMENT_FILE_ID, mime_type="application/pdf"),
+            message_id=DOCUMENT_MESSAGE_ID,
+        ),
+    ):
+        await bridge.on_message(media, make_context())
+
+    update = make_update(text="@echo_bot làm gì đó", chat_type="group")
+    await bridge.on_message(update, make_context())
+
+    reply = update.message.replies[-1]
+    assert reply.count("queued_at=echo") == QUEUED_REFERENCE_LINES
+    assert f"file_id={PHOTO_FILE_ID} message_id={PHOTO_MESSAGE_ID} mime=image/jpeg" in reply
+    assert f"file_id={DOCUMENT_FILE_ID} message_id={DOCUMENT_MESSAGE_ID} mime=application/pdf" in reply
     assert service._pending_media.get(100, []) == []
 
 

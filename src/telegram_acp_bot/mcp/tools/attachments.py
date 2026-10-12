@@ -48,7 +48,8 @@ def register_attachment_tools(mcp: FastMCP) -> None:
             "Download one Telegram attachment by file_id into the agent working directory and return its path. "
             "Use this for media that was announced as pending instead of being delivered inline: read it only "
             "when the conversation actually needs the pixels or the file contents. Pass the announced mime_type "
-            "so the saved file gets a usable extension, or pass dest to choose the path yourself."
+            "so the saved file gets a usable extension, or pass dest to choose the path yourself. "
+            "Telegram only serves a file for about an hour after it arrives, so fetch pending media promptly."
         ),
     )(telegram_fetch_attachment)
 
