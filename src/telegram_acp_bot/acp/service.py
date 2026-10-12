@@ -37,6 +37,7 @@ from acp.schema import (
 from telegram_acp_bot.acp.client import _AcpClient
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
+    AgentCommand,
     AgentOutputLimitExceededError,
     AgentReply,
     FilePayload,
@@ -132,6 +133,7 @@ class AcpAgentService:
         self._spawner = spawner or cast(AcpSpawnFn, asyncio.create_subprocess_exec)
         self._live_by_chat: dict[int, _LiveSession] = {}
         self._chat_by_session: dict[str, int] = {}
+        self._commands_by_session: dict[str, tuple[AgentCommand, ...]] = {}
         self._pending_permissions: dict[str, _PendingPermission] = {}
         self._permission_prompt_handler: Callable[[PermissionRequest], Awaitable[None]] | None = None
         self._activity_event_handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None = None
@@ -150,6 +152,7 @@ class AcpAgentService:
             await self._shutdown(existing.process)
             await self._drop_channel_session_mapping(session_id=existing.acp_session_id)
             self._chat_by_session.pop(existing.acp_session_id, None)
+            self._commands_by_session.pop(existing.acp_session_id, None)
 
         process, connection, client, capabilities = await self._start_initialized_connection(chat_id=chat_id)
         try:
@@ -192,6 +195,7 @@ class AcpAgentService:
             await self._shutdown(existing.process)
             await self._drop_channel_session_mapping(session_id=existing.acp_session_id)
             self._chat_by_session.pop(existing.acp_session_id, None)
+            self._commands_by_session.pop(existing.acp_session_id, None)
 
         process, connection, client, capabilities = await self._start_initialized_connection(chat_id=chat_id)
         if not self._supports_load_session(capabilities):
@@ -345,6 +349,7 @@ class AcpAgentService:
         await self._shutdown(live.process)
         self._registry.clear(chat_id)
         self._chat_by_session.pop(live.acp_session_id, None)
+        self._commands_by_session.pop(live.acp_session_id, None)
         await self._drop_channel_session_mapping(session_id=live.acp_session_id)
         return True
 
@@ -359,6 +364,13 @@ class AcpAgentService:
             session_mode=live.permission_mode,
             next_prompt_auto_approve=live.next_prompt_auto_approve,
         )
+
+    def get_available_commands(self, *, chat_id: int) -> tuple[AgentCommand, ...] | None:
+        """Commands the agent last advertised for this chat, or None without a live session."""
+        live = self._live_by_chat.get(chat_id)
+        if live is None:
+            return None
+        return self._commands_by_session.get(live.acp_session_id, ())
 
     async def set_session_permission_mode(self, *, chat_id: int, mode: PermissionMode) -> bool:
         live = self._live_by_chat.get(chat_id)
@@ -487,6 +499,7 @@ class AcpAgentService:
             permission_decider=self._decide_permission,
             event_reporter=self._report_permission_event,
             activity_reporter=self._forward_activity_event,
+            commands_reporter=self._store_available_commands,
         )
         connection = self._connector(client, process.stdin, process.stdout)
         try:
@@ -678,6 +691,10 @@ class AcpAgentService:
         if chat_id is None:
             return
         await handler(chat_id, block)
+
+    async def _store_available_commands(self, session_id: str, commands: tuple[AgentCommand, ...]) -> None:
+        # Agents publish this update while `session/new` is still in flight, so no chat mapping exists yet.
+        self._commands_by_session[session_id] = commands
 
     def _chat_id_by_session(self, session_id: str) -> int | None:
         return self._chat_by_session.get(session_id)

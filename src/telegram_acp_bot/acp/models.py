@@ -97,5 +97,14 @@ class ResumableSession:
     updated_at: str
 
 
+@dataclass(slots=True, frozen=True)
+class AgentCommand:
+    """Slash command an agent advertised over ACP."""
+
+    name: str
+    description: str
+    hint: str = ""
+
+
 class AgentOutputLimitExceededError(RuntimeError):
     """Raised when the agent emits a stdio line larger than the configured reader limit."""

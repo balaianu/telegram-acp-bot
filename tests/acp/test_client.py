@@ -695,3 +695,45 @@ async def test_acp_client_unsupported_ext_methods_raise():
         await client.ext_method("x", {})
     with pytest.raises(RequestError):
         await client.ext_notification("x", {})
+
+
+async def test_acp_client_reports_available_commands_with_hints():
+    reported: list[tuple[str, tuple[AgentCommand, ...]]] = []
+
+    async def allow_first(_: str, options: list[PermissionOption], tool_call: ToolCall) -> RequestPermissionResponse:
+        del options, tool_call
+        return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+    async def capture(session_id: str, commands: tuple[AgentCommand, ...]) -> None:
+        reported.append((session_id, commands))
+
+    client = _AcpClient(permission_decider=allow_first, commands_reporter=capture)
+
+    await client.session_update(
+        session_id="s-cmds",
+        update=update_available_commands(
+            [
+                AvailableCommand(name="goal", description="Set a goal", input={"hint": "<objective>"}),
+                AvailableCommand(name="deep-research", description="Research a topic"),
+            ]
+        ),
+    )
+
+    assert reported == [
+        (
+            "s-cmds",
+            (
+                AgentCommand(name="goal", description="Set a goal", hint="<objective>"),
+                AgentCommand(name="deep-research", description="Research a topic", hint=""),
+            ),
+        )
+    ]
+
+
+async def test_available_commands_without_a_reporter_are_dropped():
+    client = make_client()
+
+    await client.session_update(
+        session_id="s-cmds",
+        update=update_available_commands([AvailableCommand(name="goal", description="Set a goal")]),
+    )

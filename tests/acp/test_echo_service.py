@@ -113,3 +113,7 @@ async def test_new_session_rejects_file_workspace(tmp_path: Path) -> None:
 
 async def test_normalize_workspace_allows_none() -> None:
     assert EchoAgentService._normalize_workspace(None) is None
+
+
+async def test_echo_service_does_not_expose_available_commands() -> None:
+    assert not hasattr(EchoAgentService(SessionRegistry()), "get_available_commands")

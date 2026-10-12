@@ -32,6 +32,7 @@ async def test_start_and_help():
     assert "Send a message to start in the default workspace" in update.message.replies[0]
     assert "Commands:" in update.message.replies[1]
     assert "/cancel" in update.message.replies[1]
+    assert "/cmds" in update.message.replies[1]
     assert "/mode" in update.message.replies[1]
     assert "/scheduled" in update.message.replies[1]
 
@@ -458,25 +459,18 @@ async def test_denied_paths_for_other_handlers():
     context = make_context()
 
     await bridge.help(update, context)
+    await bridge.cmds(update, context)
     await bridge.new_session(update, make_context(args=["/tmp"]))
     await bridge.resume_session(update, make_context(args=["/tmp"]))
     await bridge.session(update, context)
     await bridge.cancel(update, context)
     await bridge.stop(update, context)
     await bridge.clear(update, context)
+    await bridge.on_agent_command(update, context)
     await bridge.on_message(update, context)
 
     assert update.message is not None
-    assert update.message.replies == [
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-        "Access denied for this bot.",
-    ]
+    assert update.message.replies == ["Access denied for this bot."] * 10
 
 
 async def test_new_session_and_session_command():

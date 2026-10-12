@@ -12,11 +12,13 @@ from urllib.parse import quote
 
 import pytest
 from acp import RequestError, text_block
+from acp.helpers import update_available_commands
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
     AllowedOutcome,
     AudioContentBlock,
+    AvailableCommand,
     BlobResourceContents,
     DeniedOutcome,
     EmbeddedResourceContentBlock,
@@ -37,6 +39,7 @@ from acp.schema import (
 from telegram_acp_bot.acp.service import AcpAgentService, _AcpClient, _PendingPermission
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
+    AgentCommand,
     AgentOutputLimitExceededError,
     AgentReply,
     FilePayload,
@@ -188,6 +191,28 @@ class FileResourceConnection(FakeConnection):
         return SimpleNamespace(stop_reason="end_turn")
 
 
+class CommandsConnection(FakeConnection):
+    """Fake agent that advertises its slash commands while the session is being created."""
+
+    async def new_session(self, *, cwd: str, mcp_servers: list) -> SimpleNamespace:
+        session = await super().new_session(cwd=cwd, mcp_servers=mcp_servers)
+        assert self.client is not None
+        await self.client.session_update(
+            session_id=session.session_id,
+            update=update_available_commands(
+                [
+                    AvailableCommand(
+                        name="goal",
+                        description="Set or manage a persistent goal",
+                        input={"hint": "<objective> | status"},
+                    ),
+                    AvailableCommand(name="deep-research", description="Research a topic"),
+                ]
+            ),
+        )
+        return session
+
+
 class OversizeLineConnection(FakeConnection):
     async def prompt(self, *, session_id: str, prompt: list) -> SimpleNamespace:
         del session_id, prompt
@@ -234,12 +259,15 @@ __all__ = [
     "AcpAgentService",
     "AgentActivityBlock",
     "AgentCapabilities",
+    "AgentCommand",
     "AgentMessageChunk",
     "AgentOutputLimitExceededError",
     "AgentReply",
     "AllowedOutcome",
     "AudioContentBlock",
+    "AvailableCommand",
     "BlobResourceContents",
+    "CommandsConnection",
     "DeniedOutcome",
     "EmbeddedResourceContentBlock",
     "FakeConnection",
@@ -290,4 +318,5 @@ __all__ = [
     "save_prompt_message_id",
     "save_session_chat_map",
     "text_block",
+    "update_available_commands",
 ]

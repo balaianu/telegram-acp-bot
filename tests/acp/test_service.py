@@ -1498,3 +1498,53 @@ async def test_log_text_preview_compacts_and_truncates():
     assert len(preview) == LOG_TEXT_PREVIEW_MAX_CHARS + 3
 
     assert log_text_preview("   ") == "<empty>"
+
+
+def _commands_service(connection: CommandsConnection) -> AcpAgentService:
+    async def fake_spawn(program: str, *args: str, **kwargs):
+        del program, args, kwargs
+        return FakeProcess()
+
+    def fake_connect(client, input_stream, output_stream):
+        del input_stream, output_stream
+        connection.client = client
+        return connection
+
+    return AcpAgentService(
+        SessionRegistry(),
+        program="agent",
+        args=[],
+        spawner=fake_spawn,
+        connector=fake_connect,
+    )
+
+
+async def test_available_commands_update_is_captured_and_exposed_per_chat(tmp_path: Path):
+    service = _commands_service(CommandsConnection(session_id="cmds-session"))
+    assert service.get_available_commands(chat_id=7) is None
+
+    await service.new_session(chat_id=7, workspace=tmp_path)
+
+    commands = service.get_available_commands(chat_id=7)
+    assert commands is not None
+    assert [(command.name, command.description, command.hint) for command in commands] == [
+        ("goal", "Set or manage a persistent goal", "<objective> | status"),
+        ("deep-research", "Research a topic", ""),
+    ]
+    assert service.get_available_commands(chat_id=8) is None
+
+
+async def test_available_commands_are_cleared_when_the_session_stops(tmp_path: Path):
+    service = _commands_service(CommandsConnection(session_id="cmds-session"))
+    await service.new_session(chat_id=7, workspace=tmp_path)
+    assert service.get_available_commands(chat_id=7)
+
+    await service.new_session(chat_id=7, workspace=tmp_path)
+    assert service.get_available_commands(chat_id=7)
+
+    await service.load_session(chat_id=7, session_id="loaded-session", workspace=tmp_path)
+    assert service.get_available_commands(chat_id=7) == ()
+
+    await service.new_session(chat_id=7, workspace=tmp_path)
+    await service.stop(chat_id=7)
+    assert service.get_available_commands(chat_id=7) is None

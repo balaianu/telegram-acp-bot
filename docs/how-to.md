@@ -240,6 +240,40 @@ That path replies with:
 Session resumed: <session_id> in <workspace>
 ```
 
+## 11. Run the agent's own slash commands
+
+Some agents publish their own slash commands over ACP. List them from Telegram:
+
+```text
+/cmds
+```
+
+```text
+/goal: Set or manage a persistent goal — <objective> [--turns <number>] | status | clear
+/deep-research: Fan out web research and return a cited report
+```
+
+Any command in that list is forwarded to the agent verbatim, leading slash included, so it runs inside the active
+session like a normal prompt:
+
+```text
+/goal status
+```
+
+Commands are matched in message text and in photo or document captions, and they follow the same rules as any other
+message: the allowlist, the group @mention gate, and the busy queue still apply.
+
+Two limits to know about:
+
+- The list is empty until the agent advertises its commands, which normally happens when the session is created. Send
+  a message or use `/new` first, then ask again.
+- The bot's own commands always win. `/help`, `/mode` and the rest belong to the bot even if the agent advertises a
+  command with the same name.
+
+A command the agent did not advertise is rejected instead of forwarded, so a typo never reaches the agent as prompt
+text. Commands that need an interactive terminal answer that themselves, for example
+`Command /help requires interactive UI and is not available in ACP.`
+
 ## Notes
 
 - Session scope is per Telegram chat.
@@ -247,6 +281,7 @@ Session resumed: <session_id> in <workspace>
 - `/new` replaces the active session for that chat and is intended for explicitly switching to another workspace/session.
 - `/resume` is ACP-native (`session/list` + `session/load`) and depends on agent capabilities.
 - `/mode` is stored per Telegram chat, so different chats can use different activity modes.
+- `/cmds` lists the slash commands the agent advertised for the current session; see the how-to section above.
 
 ## Logging and traceability
 

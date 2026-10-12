@@ -11,6 +11,8 @@ from acp import RequestError
 from acp.schema import (
     AgentMessageChunk,
     AudioContentBlock,
+    AvailableCommand,
+    AvailableCommandsUpdate,
     BlobResourceContents,
     CreateTerminalResponse,
     EmbeddedResourceContentBlock,
@@ -34,6 +36,7 @@ from acp.schema import (
 
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
+    AgentCommand,
     AgentReply,
     FilePayload,
     ImagePayload,
@@ -53,6 +56,12 @@ from telegram_acp_bot.acp.session import (
 )
 
 
+def _agent_command(command: AvailableCommand) -> AgentCommand:
+    """Project one ACP advertised command onto the transport-facing model."""
+    hint = command.input.root.hint if command.input is not None else ""
+    return AgentCommand(name=command.name, description=command.description, hint=hint)
+
+
 class _AcpClient:
     """ACP client callbacks that accumulate agent text chunks per session."""
 
@@ -62,10 +71,12 @@ class _AcpClient:
         permission_decider: Callable[[str, list[PermissionOption], ToolCall], Awaitable[RequestPermissionResponse]],
         event_reporter: Callable[[str, str], None] | None = None,
         activity_reporter: Callable[[str, AgentActivityBlock], Awaitable[None]] | None = None,
+        commands_reporter: Callable[[str, tuple[AgentCommand, ...]], Awaitable[None]] | None = None,
     ) -> None:
         self._permission_decider = permission_decider
         self._event_reporter = event_reporter
         self._activity_reporter = activity_reporter
+        self._commands_reporter = commands_reporter
         self._buffers: dict[str, list[str]] = {}
         self._pending_non_tool_text: dict[str, list[str]] = {}
         self._pending_non_tool_state: dict[str, _PendingTextState] = {}
@@ -143,6 +154,11 @@ class _AcpClient:
                 if active_block.tool_call_id != update.tool_call_id:
                     return
                 await self._close_active_tool_block(session_id=session_id, status=status)
+            return
+        if isinstance(update, AvailableCommandsUpdate):
+            commands = tuple(_agent_command(command) for command in update.available_commands)
+            self._report_event(session_id, f"available commands {len(commands)}")
+            await self._emit_commands(session_id=session_id, commands=commands)
             return
         if not isinstance(update, AgentMessageChunk):
             return
@@ -338,6 +354,11 @@ class _AcpClient:
         if self._activity_reporter is None:
             return
         await self._activity_reporter(session_id, block)
+
+    async def _emit_commands(self, *, session_id: str, commands: tuple[AgentCommand, ...]) -> None:
+        if self._commands_reporter is None:
+            return
+        await self._commands_reporter(session_id, commands)
 
     async def _flush_pending_non_tool_text(self, *, session_id: str) -> None:
         pending = self._pending_non_tool_text.get(session_id)

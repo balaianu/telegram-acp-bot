@@ -31,6 +31,7 @@ BOT_COMMANDS: tuple[tuple[str, str], ...] = (
     ("stop", "Stop the current session"),
     ("clear", "Clear the current session"),
     ("restart", "Restart the bot [N [workspace]]"),
+    ("cmds", "List the slash commands this agent advertises"),
     ("help", "Show available commands"),
 )
 SCHEDULE_COMMAND_USAGE = (
@@ -57,3 +58,4 @@ ACTIVITY_MODE_CHOICES: tuple[str, ...] = ("normal", "compact", "verbose")
 ACTIVITY_MODE_HELP = "normal, compact, or verbose"
 COMPACT_STATUS_HINT_CHARS = 60
 COMPACT_STATUS_TICK_SECONDS = 4.0
+AGENT_COMMAND_DESCRIPTION_CHARS = 100

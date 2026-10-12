@@ -41,6 +41,7 @@ from telegramify_markdown import convert, split_entities, utf16_len
 from telegram_acp_bot.acp.models import (
     ActivityMode,
     AgentActivityBlock,
+    AgentCommand,
     AgentOutputLimitExceededError,
     AgentReply,
     FilePayload,
@@ -69,6 +70,7 @@ from telegram_acp_bot.telegram.config import BotConfig
 from telegram_acp_bot.telegram.constants import (
     ACTIVITY_MODE_CHOICES,
     ACTIVITY_MODE_HELP,
+    AGENT_COMMAND_DESCRIPTION_CHARS,
     BUSY_CALLBACK_PARTS,
     BUSY_CALLBACK_PREFIX,
     BUSY_QUEUED_TEXT,
@@ -112,6 +114,7 @@ SCHEDULED_TASK_PREVIEW_MAX_CHARS = 72
 SCHEDULE_COMMAND_MIN_ARGS = 2
 _SCHEDULE_DELAY_RE = re.compile(r"^(\d+)(s|m|h|d)$", re.IGNORECASE)
 GROUP_CHAT_TYPES = frozenset({"group", "supergroup"})
+_AGENT_COMMAND_TOKEN_RE = re.compile(r"^/([A-Za-z0-9_-]{1,32})(?:@[A-Za-z0-9_]{1,32})?(?:\s|$)")
 
 
 def _text_mentions_handle(text: str | None, entities: tuple[MessageEntity, ...] | None, handle: str) -> bool:
@@ -156,6 +159,30 @@ def _with_pending_media(text: str, refs: tuple[dict[str, object], ...]) -> str:
     )
     notice = "\n".join(lines)
     return f"{notice}\n\n{text}" if text else notice
+
+
+def _command_name(name: str) -> str:
+    """Normalize a command name for comparison, whichever casing the agent published."""
+    return name.removeprefix("/").lower()
+
+
+class _AgentCommandMessage(filters.MessageFilter):
+    """Match messages that open with a `/command` token, in the text or in a media caption.
+
+    `telegram.ext.filters.COMMAND` keys on the `bot_command` entity, which the Bot API only
+    attaches reliably in private chats, so the token is matched from the raw text instead.
+    """
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        super().__init__(name="filters.AgentCommand")
+
+    def filter(self, message: Message) -> bool:
+        return _AGENT_COMMAND_TOKEN_RE.match(message.text or message.caption or "") is not None
+
+
+_AGENT_COMMAND = _AgentCommandMessage()
 
 
 class TelegramBridge:
@@ -214,12 +241,14 @@ class TelegramBridge:
         app.add_handler(CommandHandler("stop", self.stop))
         app.add_handler(CommandHandler("clear", self.clear))
         app.add_handler(CommandHandler("restart", self.restart))
+        app.add_handler(CommandHandler("cmds", self.cmds))
         app.add_handler(CallbackQueryHandler(self.on_permission_callback, pattern=r"^perm\|"))
         app.add_handler(CallbackQueryHandler(self.on_resume_callback, pattern=r"^resume\|"))
         app.add_handler(CallbackQueryHandler(self.on_scheduled_callback, pattern=r"^scheduled\|"))
         app.add_handler(CallbackQueryHandler(self.on_busy_callback, pattern=r"^busy\|"))
+        app.add_handler(MessageHandler(_AGENT_COMMAND, self.on_agent_command))
         app.add_handler(
-            MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, self.on_message)
+            MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~_AGENT_COMMAND, self.on_message)
         )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,8 +268,39 @@ class TelegramBridge:
             update,
             "Commands: /new [workspace], /resume [N|workspace], /schedule <time> <prompt>, /scheduled, "
             "/mode [normal|compact|verbose], "
-            "/session, /cancel, /stop, /clear, /restart [N [workspace]], /help",
+            "/session, /cancel, /stop, /clear, /restart [N [workspace]], /cmds, /help",
         )
+
+    async def cmds(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        del context
+        if not await self._require_access(update):
+            return
+        commands = self._advertised_commands(chat_id=self._chat_id(update))
+        if not commands:
+            await self._reply(
+                update,
+                "This agent has not advertised any slash commands yet. Send a message first, or use /new.",
+            )
+            return
+        await self._reply(update, self._commands_listing(commands))
+
+    def _advertised_commands(self, *, chat_id: int) -> tuple[AgentCommand, ...]:
+        """Slash commands the agent published for this chat; empty when the service or session has none."""
+        provider = getattr(self._agent_service, "get_available_commands", None)
+        if not callable(provider):
+            return ()
+        return provider(chat_id=chat_id) or ()
+
+    @staticmethod
+    def _commands_listing(commands: tuple[AgentCommand, ...]) -> str:
+        lines: list[str] = []
+        for command in commands:
+            description = command.description
+            if len(description) > AGENT_COMMAND_DESCRIPTION_CHARS:
+                description = f"{description[: AGENT_COMMAND_DESCRIPTION_CHARS - 1].rstrip()}…"
+            suffix = f" — `{command.hint}`" if command.hint else ""
+            lines.append(f"/{command.name}: {description}{suffix}")
+        return "\n".join(lines)
 
     async def mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._require_access(update):
@@ -891,6 +951,27 @@ class TelegramBridge:
             response = f"Restart requested. Re-launching process...\n{response}"
         await self._reply(update, response)
         return True
+
+    async def on_agent_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Forward a slash command the agent advertised straight into the normal prompt pipeline."""
+        if not await self._require_access(update):
+            return
+
+        message = update.message
+        text = "" if message is None else (message.text or message.caption or "")
+        match = _AGENT_COMMAND_TOKEN_RE.match(text)
+        if match is None:
+            return
+        name = match.group(1).lower()
+
+        chat_id = self._chat_id(update)
+        commands = self._advertised_commands(chat_id=chat_id)
+        if not any(_command_name(command.name) == name for command in commands):
+            await self._reply(update, f"/{name} is not a command this agent advertises. See /cmds.")
+            return
+
+        logger.info("Forwarding agent command on chat_id=%s text=%s", chat_id, log_text_preview(text))
+        await self.on_message(update, context)
 
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._require_access(update):

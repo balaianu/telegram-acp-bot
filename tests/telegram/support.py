@@ -16,11 +16,13 @@ from telegram_acp_bot.acp.echo_service import EchoAgentService
 from telegram_acp_bot.acp.models import (
     ActivityMode,
     AgentActivityBlock,
+    AgentCommand,
     AgentOutputLimitExceededError,
     AgentReply,
     FilePayload,
     ImagePayload,
     PermissionRequest,
+    PromptImage,
     ResumableSession,
 )
 from telegram_acp_bot.core.session_registry import SessionRegistry
@@ -496,6 +498,30 @@ class RecordingImplicitService(ImplicitSessionServiceBase):
         return AgentReply(text="ok")
 
 
+class AgentCommandsService(ImplicitSessionServiceBase):
+    """Service double that advertises agent slash commands and records forwarded prompts."""
+
+    def __init__(self, commands: tuple[AgentCommand, ...] | None = ()) -> None:
+        super().__init__()
+        self.commands = commands
+        self.prompts: list[tuple[str, tuple[PromptImage, ...]]] = []
+        self.new_session_calls: list[tuple[int, Path]] = []
+
+    async def new_session(self, *, chat_id: int, workspace: Path) -> str:
+        self.new_session_calls.append((chat_id, workspace))
+        self._workspace_by_chat[chat_id] = workspace
+        return "s-cmds"
+
+    def get_available_commands(self, *, chat_id: int) -> tuple[AgentCommand, ...] | None:
+        del chat_id
+        return self.commands
+
+    async def prompt(self, *, chat_id: int, text: str, images=(), files=()):
+        del chat_id, files
+        self.prompts.append((text, images))
+        return AgentReply(text="ok")
+
+
 class FailingImplicitService(ImplicitSessionServiceBase):
     def __init__(self, error: Exception) -> None:
         super().__init__()
@@ -621,6 +647,8 @@ __all__ = [
     "AIORateLimiter",
     "ActivityMode",
     "AgentActivityBlock",
+    "AgentCommand",
+    "AgentCommandsService",
     "AgentOutputLimitExceededError",
     "AgentReply",
     "AgentService",
