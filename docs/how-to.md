@@ -265,12 +265,15 @@ message: the allowlist, the group @mention gate, and the busy queue still apply.
 `@username` to a command picked from the menu, the bot strips that mention before forwarding, so the agent receives
 `/goal status`.
 
-Two limits to know about:
+Three limits to know about:
 
 - The list is empty until the agent advertises its commands, which normally happens when the session is created. Send
   a message or use `/new` first, then ask again.
 - The bot's own commands always win. `/help`, `/mode` and the rest belong to the bot even if the agent advertises a
   command with the same name.
+- The agent's commands never join Telegram's native `/` menu, which only mirrors the bot's own command list. Type them
+  or copy them from `/cmds`. That menu comes from `register-commands`, so after an upgrade that adds a bot command,
+  run `telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN"` again or the new entry stays hidden.
 
 A command the agent did not advertise is rejected instead of forwarded, so a typo never reaches the agent as prompt
 text. Commands that need an interactive terminal answer that themselves, for example
