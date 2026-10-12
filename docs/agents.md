@@ -12,7 +12,7 @@ Use {term}`ACP_AGENT_COMMAND` to define the command executed by `/new`.
 | GitHub Copilot CLI | Native ACP support (`--acp`) | `ACP_AGENT_COMMAND="copilot --acp"` |
 | [Codex CLI](https://developers.openai.com/codex/cli) | Via ACP adapter | `ACP_AGENT_COMMAND="npx @zed-industries/codex-acp"` |
 | [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) / [Claude Code](https://code.claude.com/docs/en/cli-reference) | Via ACP adapter | `ACP_AGENT_COMMAND="npx @zed-industries/claude-agent-acp"` |
-| Qoder CLI | Native ACP support (`--acp`); advertises its slash commands over `available_commands_update`, proxies its multiple-choice questions as form elicitations, and commands that need a terminal reply that themselves | `ACP_AGENT_COMMAND="qodercli --acp"` |
+| Qoder CLI | Native ACP support (`--acp`); advertises its slash commands over `available_commands_update`, proxies its multiple-choice questions as form elicitations, and answers commands that need its own terminal itself | `ACP_AGENT_COMMAND="qodercli --acp"` |
 
 ## Gemini CLI (native ACP)
 
