@@ -313,13 +313,17 @@ options. `⏭️ Skip this question` declines the elicitation, which lets the ag
 waiting. A form of two questions arrives as one message listing both prompts and offering both sets of buttons; the
 agent is answered only once every question has a choice.
 
-Two limits to know about:
+Three limits to know about:
 
 - Only fields the agent offered as a choice of known options become buttons. A field you would have to type into, or an
   elicitation that is not a form, is declined so the agent falls back to asking in plain text.
 - The question waits five minutes for a tap and is then cancelled, and the last `ELICITATION_FORMS_MAX` forms are
   remembered: a button from an older keyboard, or one whose question the agent already stopped waiting for, answers with
   a toast instead of being sent twice.
+- A button shows at most `ELICITATION_OPTION_LABEL_CHARS` characters of the option and ends in `…` when the agent offered
+  a longer one, so a cut label is never mistaken for a complete answer. The question line above still shows what the
+  agent asked, but the rest of a cut option is only visible if the agent repeats it there, so an option meant to be
+  chosen by tap should be short.
 
 The question is sent as its own message rather than into the compact status bubble, because the status line is rewritten
 while the agent works and would overwrite a question nobody has answered yet.

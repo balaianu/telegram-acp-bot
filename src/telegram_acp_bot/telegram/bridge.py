@@ -869,7 +869,9 @@ class TelegramBridge:
 
     @staticmethod
     def _elicitation_button_label(question: ElicitationQuestion, option: ElicitationOption, *, selected: bool) -> str:
-        label = (option.label or option.value)[:ELICITATION_OPTION_LABEL_CHARS]
+        label = option.label or option.value
+        if len(label) > ELICITATION_OPTION_LABEL_CHARS:
+            label = f"{label[: ELICITATION_OPTION_LABEL_CHARS - 1].rstrip()}…"
         if question.multiple and selected:
             return f"{ELICITATION_SELECTED_PREFIX}{label}"
         return label

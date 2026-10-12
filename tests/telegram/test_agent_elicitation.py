@@ -193,7 +193,7 @@ async def test_option_labels_are_cut_to_the_button_budget_and_fall_back_to_the_v
     await bridge.on_elicitation_request(_request(_question(options=((long_label, ""), ("other", "Second")))))
 
     first, second = _keyboard(_bot(bridge)).inline_keyboard[0]
-    assert first.text == "x" * ELICITATION_OPTION_LABEL_CHARS
+    assert first.text == "x" * (ELICITATION_OPTION_LABEL_CHARS - 1) + "…"
     assert second.text == "Second"
 
 
