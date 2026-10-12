@@ -312,6 +312,8 @@ Tapping an option sends that answer to the agent and the prompt continues from i
 options. `⏭️ Skip this question` declines the elicitation, which lets the agent proceed without an answer instead of
 waiting. A form of two questions arrives as one message listing both prompts and offering both sets of buttons; the
 agent is answered only once every question has a choice.
+Once the answer reaches the agent the buttons are removed from the question message, so the same question cannot be
+answered twice and the message is left as a plain record of what was asked.
 
 Three limits to know about:
 

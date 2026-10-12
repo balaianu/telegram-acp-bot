@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 
 from telegram import InlineKeyboardButton
+from telegram.error import BadRequest
 from telegram_acp_bot.acp.models import ElicitationOption, ElicitationQuestion, ElicitationRequest
 from telegram_acp_bot.telegram.constants import (
     ELICITATION_CALLBACK_PREFIX,
@@ -26,16 +27,19 @@ SPENT_OPTIONS = (("food", "Ăn uống"), ("rent", "Nhà trọ"))
 class TapQuery:
     """Callback query that records every keyboard the bridge redraws on the tapped message."""
 
-    def __init__(self, data: str, *, message: DummyMessage) -> None:
+    def __init__(self, data: str, *, message: DummyMessage, edit_error: Exception | None = None) -> None:
         self.data = data
         self.message = message
         self.answers: list[str] = []
         self.markups: list[object] = []
+        self.edit_error = edit_error
 
     async def answer(self, text: str | None = None) -> None:
         self.answers.append(text or "")
 
     async def edit_message_reply_markup(self, *, reply_markup: object | None = None) -> None:
+        if self.edit_error is not None:
+            raise self.edit_error
         self.markups.append(reply_markup)
 
 
@@ -114,9 +118,13 @@ def _request(
     )
 
 
-def _tap(request_id: str, token: str) -> tuple[Update, TapQuery]:
+def _tap(request_id: str, token: str, *, edit_error: Exception | None = None) -> tuple[Update, TapQuery]:
     tapped = DummyMessage("The agent is asking", message_id=7)
-    query = TapQuery(f"{ELICITATION_CALLBACK_PREFIX}|{request_id}|{token}", message=tapped)
+    query = TapQuery(
+        f"{ELICITATION_CALLBACK_PREFIX}|{request_id}|{token}",
+        message=tapped,
+        edit_error=edit_error,
+    )
     update = cast(
         Update,
         SimpleNamespace(
@@ -134,6 +142,12 @@ def _keyboard(bot: DummyBot) -> InlineKeyboardMarkup:
     markup = bot.sent_messages[-1]["reply_markup"]
     assert isinstance(markup, InlineKeyboardMarkup)
     return markup
+
+
+def _cleared(query: TapQuery) -> bool:
+    """Telegram only removes a keyboard when an empty one is sent; omitting it leaves the old keys up."""
+    markup = query.markups[-1]
+    return isinstance(markup, InlineKeyboardMarkup) and markup.inline_keyboard == ()
 
 
 def _buttons(markup: InlineKeyboardMarkup) -> list[InlineKeyboardButton]:
@@ -218,7 +232,7 @@ async def test_multi_select_offers_a_submit_row_and_marks_every_pick():
     await bridge.on_elicitation_callback(submit_tap, make_context())
 
     assert submit_query.answers == ["Answer sent."]
-    assert submit_query.markups == [None]
+    assert submit_query.markups and _cleared(submit_query)
     assert service.resolved == [(TEST_CHAT_ID, request.request_id, {"q0": ("food",)})]
 
 
@@ -329,7 +343,7 @@ async def test_the_skip_button_declines_without_an_answer():
 
     assert query.answers == ["Skipped."]
     assert service.resolved == [(TEST_CHAT_ID, request.request_id, None)]
-    assert query.markups == [None]
+    assert query.markups and _cleared(query)
 
 
 async def test_a_tap_on_a_question_that_stopped_waiting_is_reported():
@@ -464,3 +478,29 @@ async def test_the_elicitation_keyboard_is_registered_after_the_command_keyboard
     assert service.handler == bridge.on_elicitation_request
     assert callbacks.count(bridge.on_elicitation_callback) == 1
     assert callbacks.index(bridge.on_agent_command_callback) < callbacks.index(bridge.on_elicitation_callback)
+
+
+async def test_a_keyboard_the_agent_left_unchanged_is_not_reported_as_a_failure():
+    bridge, service = make_elicitation_bridge()
+    request = _request(_question(multiple=True, options=SPENT_OPTIONS))
+
+    await bridge.on_elicitation_request(request)
+
+    update, query = _tap(request.request_id, "0.1", edit_error=BadRequest("Message is not modified: same"))
+    await bridge.on_elicitation_callback(update, make_context())
+
+    assert query.answers == ["Pick every answer, then tap Send my answer."]
+    assert service.resolved == []
+
+
+async def test_a_real_edit_failure_still_answers_with_an_error():
+    bridge, service = make_elicitation_bridge()
+    request = _request(_question(options=SPENT_OPTIONS))
+
+    await bridge.on_elicitation_request(request)
+
+    update, query = _tap(request.request_id, ELICITATION_SKIP_TOKEN, edit_error=BadRequest("Bad chat"))
+    await bridge.on_elicitation_callback(update, make_context())
+
+    assert query.answers == ["Skipped.", "Answering this question failed."]
+    assert service.resolved == [(TEST_CHAT_ID, request.request_id, None)]

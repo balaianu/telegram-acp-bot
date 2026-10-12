@@ -114,6 +114,7 @@ from telegram_acp_bot.telegram.constants import (
     SEARCH_LABEL_NEUTRAL,
     SEARCH_LABEL_WEB,
     TELEGRAM_MAX_UTF16_MESSAGE_LENGTH,
+    TELEGRAM_UNCHANGED_MESSAGE_ERROR,
 )
 from telegram_acp_bot.telegram.models import (
     AgentService,
@@ -814,10 +815,19 @@ class TelegramBridge:
             return
         answers = self._elicitation_answers(form)
         if answers is None:
-            await query.edit_message_reply_markup(reply_markup=self._elicitation_keyboard(form))
+            await self._replace_elicitation_markup(query, self._elicitation_keyboard(form))
             await query.answer("Pick every answer, then tap Send my answer.")
             return
         await self._resolve_elicitation(form, answers=answers, query=query, toast="Answer sent.")
+
+    async def _replace_elicitation_markup(self, query: CallbackQuery, markup: InlineKeyboardMarkup) -> None:
+        """Put a new keyboard on the question message; a tap that changed nothing is not a failure."""
+        try:
+            await query.edit_message_reply_markup(reply_markup=markup)
+        except BadRequest as exc:
+            if TELEGRAM_UNCHANGED_MESSAGE_ERROR not in str(exc).lower():
+                raise
+            logger.debug("Elicitation keyboard unchanged: %s", exc)
 
     def _remember_elicitation_form(self, request: ElicitationRequest) -> None:
         """Keep the offered form so a later tap can re-render the same keyboard."""
@@ -935,7 +945,7 @@ class TelegramBridge:
             await query.answer("This question is no longer waiting for an answer.")
             return
         await query.answer(toast)
-        await query.edit_message_reply_markup(reply_markup=None)
+        await self._replace_elicitation_markup(query, InlineKeyboardMarkup(()))
 
     async def on_permission_request(self, request: PermissionRequest) -> None:
         if self._app is None:
