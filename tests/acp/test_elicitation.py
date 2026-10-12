@@ -597,6 +597,31 @@ async def test_the_answer_sent_a_second_before_the_turn_ended_is_kept(tmp_path: 
     assert response.action == "accept"
 
 
+async def test_a_question_is_closed_when_the_turn_ends_with_an_error(tmp_path: Path) -> None:
+    """`/new` mid-question closes the keyboard only because a killed agent makes the prompt raise."""
+    service = await _start_service(tmp_path, connection=GenericValueErrorConnection(session_id="elicit"))
+    closed: list[tuple[int, str]] = []
+
+    async def expiry(chat_id: int, request_id: str) -> None:
+        closed.append((chat_id, request_id))
+
+    service.set_elicitation_request_handler(_ignore)
+    service.set_elicitation_expiry_handler(expiry)
+
+    pending = asyncio.create_task(service._decide_elicitation("Answer Questions", _one_question_mode()))
+    while not service._pending_elicitations:
+        await asyncio.sleep(0)
+    (request_id,) = service._pending_elicitations
+
+    with pytest.raises(ValueError, match="unexpected"):
+        await service.prompt(chat_id=1, text="báo cáo đi")
+    response = await asyncio.wait_for(pending, timeout=1)
+
+    assert response.action == "cancel"
+    assert service._pending_elicitations == {}
+    assert closed == [(1, request_id)]
+
+
 async def _ignore(request: ElicitationRequest) -> None:
     del request
 
