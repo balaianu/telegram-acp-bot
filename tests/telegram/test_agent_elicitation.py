@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 
-from telegram import InlineKeyboardButton
+from telegram import InlineKeyboardButton, MessageEntity
 from telegram.error import BadRequest
 from telegram_acp_bot.acp.models import ElicitationOption, ElicitationQuestion, ElicitationRequest
 from telegram_acp_bot.telegram.constants import (
+    ELICITATION_ANSWER_RECORD_PREFIX,
     ELICITATION_CALLBACK_PREFIX,
     ELICITATION_FORMS_MAX,
     ELICITATION_KEYBOARD_COLUMNS,
     ELICITATION_OPTION_LABEL_CHARS,
+    ELICITATION_REMOVED_KEYBOARD,
     ELICITATION_SELECTED_PREFIX,
     ELICITATION_SKIP_LABEL,
+    ELICITATION_SKIP_RECORD,
     ELICITATION_SKIP_TOKEN,
     ELICITATION_SUBMIT_LABEL,
     ELICITATION_SUBMIT_TOKEN,
@@ -25,17 +28,32 @@ SPENT_OPTIONS = (("food", "Ăn uống"), ("rent", "Nhà trọ"))
 
 
 class TapQuery:
-    """Callback query that records every keyboard the bridge redraws on the tapped message."""
+    """Callback query that records every keyboard and text the bridge redraws on the tapped message."""
 
-    def __init__(self, data: str, *, message: DummyMessage, edit_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        data: str,
+        *,
+        message: DummyMessage,
+        edit_error: Exception | None = None,
+        text_edit_error: Exception | None = None,
+    ) -> None:
         self.data = data
         self.message = message
         self.answers: list[str] = []
         self.markups: list[object] = []
+        self.texts: list[dict[str, object]] = []
         self.edit_error = edit_error
+        self.text_edit_error = text_edit_error
 
     async def answer(self, text: str | None = None) -> None:
         self.answers.append(text or "")
+
+    async def edit_message_text(self, text: str, **kwargs: object) -> None:
+        error = self.text_edit_error or self.edit_error
+        if error is not None:
+            raise error
+        self.texts.append({"text": text, **kwargs})
 
     async def edit_message_reply_markup(
         self,
@@ -139,12 +157,19 @@ def _request(
     )
 
 
-def _tap(request_id: str, token: str, *, edit_error: Exception | None = None) -> tuple[Update, TapQuery]:
+def _tap(
+    request_id: str,
+    token: str,
+    *,
+    edit_error: Exception | None = None,
+    text_edit_error: Exception | None = None,
+) -> tuple[Update, TapQuery]:
     tapped = DummyMessage("The agent is asking", message_id=7)
     query = TapQuery(
         f"{ELICITATION_CALLBACK_PREFIX}|{request_id}|{token}",
         message=tapped,
         edit_error=edit_error,
+        text_edit_error=text_edit_error,
     )
     update = cast(
         Update,
@@ -168,7 +193,10 @@ def _keyboard(bot: DummyBot) -> InlineKeyboardMarkup:
 def _cleared(query: TapQuery) -> bool:
     """Telegram removes a keyboard only from a raw empty inline_keyboard: omitting it or sending an empty
     InlineKeyboardMarkup (which serializes to ``{}``) both mean "change nothing"."""
-    return query.markups[-1] == {"inline_keyboard": []}
+    if query.texts:
+        # A resolved tap records the answer and removes the keyboard in one edit_message_text call.
+        return query.texts[-1].get("api_kwargs") == ELICITATION_REMOVED_KEYBOARD
+    return bool(query.markups) and query.markups[-1] == {"inline_keyboard": []}
 
 
 def _buttons(markup: InlineKeyboardMarkup) -> list[InlineKeyboardButton]:
@@ -253,7 +281,7 @@ async def test_multi_select_offers_a_submit_row_and_marks_every_pick():
     await bridge.on_elicitation_callback(submit_tap, make_context())
 
     assert submit_query.answers == ["Answer sent."]
-    assert submit_query.markups and _cleared(submit_query)
+    assert submit_query.texts and _cleared(submit_query)
     assert service.resolved == [(TEST_CHAT_ID, request.request_id, {"q0": ("food",)})]
 
 
@@ -269,6 +297,78 @@ async def test_a_single_choice_tap_answers_the_form_at_once():
     assert service.resolved == [(TEST_CHAT_ID, request.request_id, {"q0": ("month",)})]
     assert bridge._elicitation_forms == {}
     assert bridge._elicitation_selections == {}
+
+
+async def test_the_tapped_answer_is_written_on_the_question_message():
+    bridge, service = make_elicitation_bridge()
+    request = _request()
+    await bridge.on_elicitation_request(request)
+
+    update, query = _tap(request.request_id, "0.1")
+    await bridge.on_elicitation_callback(update, make_context())
+
+    assert query.answers == ["Answer sent."]
+    recorded = query.texts[-1]
+    assert recorded["text"] == f"The agent is asking\n{ELICITATION_ANSWER_RECORD_PREFIX} Theo tháng"
+    assert recorded["api_kwargs"] == ELICITATION_REMOVED_KEYBOARD
+    assert service.resolved == [(TEST_CHAT_ID, request.request_id, {"q0": ("month",)})]
+
+
+async def test_a_two_question_answer_numbers_every_choice():
+    bridge, _ = make_elicitation_bridge()
+    request = _request(
+        _question(),
+        _question(field="q1", prompt="Kỳ báo cáo", options=(("2026-09", "Tháng 9"), ("2026-10", "Tháng 10"))),
+    )
+    await bridge.on_elicitation_request(request)
+
+    first, _ = _tap(request.request_id, "0.1")
+    await bridge.on_elicitation_callback(first, make_context())
+    second, second_query = _tap(request.request_id, "1.1")
+    await bridge.on_elicitation_callback(second, make_context())
+
+    recorded = second_query.texts[-1]
+    text = cast(str, recorded["text"])
+    assert text.endswith(f"{ELICITATION_ANSWER_RECORD_PREFIX} 1. Theo tháng / 2. Tháng 10")
+
+
+async def test_the_answer_record_reuses_the_message_entities():
+    bridge, _ = make_elicitation_bridge()
+    request = _request()
+    await bridge.on_elicitation_request(request)
+
+    entity = MessageEntity(offset=19, length=5, type=MessageEntity.BOLD)
+    tapped = DummyMessage("The agent is asking", message_id=7, entities=[entity])
+    query = TapQuery(f"{ELICITATION_CALLBACK_PREFIX}|{request.request_id}|0.0", message=tapped)
+    update = cast(
+        Update,
+        SimpleNamespace(
+            effective_user=SimpleNamespace(id=1, username=None),
+            effective_chat=SimpleNamespace(id=TEST_CHAT_ID, type="private"),
+            callback_query=query,
+            message=None,
+            effective_message=tapped,
+        ),
+    )
+    await bridge.on_elicitation_callback(update, make_context())
+
+    recorded = query.texts[-1]
+    assert recorded["entities"] == [entity]
+    assert recorded["api_kwargs"] == ELICITATION_REMOVED_KEYBOARD
+
+
+async def test_a_refused_answer_record_still_clears_the_keyboard():
+    bridge, service = make_elicitation_bridge()
+    request = _request()
+    await bridge.on_elicitation_request(request)
+
+    update, query = _tap(request.request_id, "0.0", text_edit_error=BadRequest("Bad chat"))
+    await bridge.on_elicitation_callback(update, make_context())
+
+    assert query.answers == ["Answer sent."]
+    assert query.texts == []
+    assert query.markups[-1] == {"inline_keyboard": []}
+    assert service.resolved == [(TEST_CHAT_ID, request.request_id, {"q0": ("category",)})]
 
 
 async def test_a_two_question_form_lists_both_prompts_and_waits_for_the_second_answer():
@@ -364,7 +464,8 @@ async def test_the_skip_button_declines_without_an_answer():
 
     assert query.answers == ["Skipped."]
     assert service.resolved == [(TEST_CHAT_ID, request.request_id, None)]
-    assert query.markups and _cleared(query)
+    assert query.texts and _cleared(query)
+    assert query.texts[-1]["text"] == f"The agent is asking\n{ELICITATION_SKIP_RECORD}"
 
 
 async def test_a_tap_on_a_question_that_stopped_waiting_is_reported():

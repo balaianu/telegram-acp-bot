@@ -88,6 +88,8 @@ from telegram_acp_bot.telegram.constants import (
     BUSY_STILL_QUEUED_TEXT,
     COMPACT_STATUS_HINT_CHARS,
     COMPACT_STATUS_TICK_SECONDS,
+    ELICITATION_ANSWER_JOINER,
+    ELICITATION_ANSWER_RECORD_PREFIX,
     ELICITATION_CALLBACK_PARTS,
     ELICITATION_CALLBACK_PREFIX,
     ELICITATION_FORMS_MAX,
@@ -96,6 +98,7 @@ from telegram_acp_bot.telegram.constants import (
     ELICITATION_REMOVED_KEYBOARD,
     ELICITATION_SELECTED_PREFIX,
     ELICITATION_SKIP_LABEL,
+    ELICITATION_SKIP_RECORD,
     ELICITATION_SKIP_TOKEN,
     ELICITATION_SUBMIT_LABEL,
     ELICITATION_SUBMIT_TOKEN,
@@ -1010,7 +1013,58 @@ class TelegramBridge:
             await query.answer("This question is no longer waiting for an answer.")
             return
         await query.answer(toast)
-        await self._replace_elicitation_markup(query, None)
+        await self._record_elicitation_outcome(form, query=query, answers=answers)
+
+    async def _record_elicitation_outcome(
+        self,
+        form: ElicitationRequest,
+        *,
+        query: CallbackQuery,
+        answers: Mapping[str, tuple[str, ...]] | None,
+    ) -> None:
+        """Turn the question message into the record of the choice.
+
+        The tapped answer is appended to the message that asked, and the same edit drops the
+        keyboard — so the question keeps its answer even after the conversation moved on to a new
+        bubble (B30). The appended line carries no formatting, so the original entities stay valid
+        at their offsets. If Telegram refuses the text edit the keyboard is still removed, because
+        a keyboard must never outlive the answer it asked for.
+        """
+        message = getattr(query, "message", None)
+        original = getattr(message, "text", None) if message is not None else None
+        line = self._elicitation_answer_line(form, answers=answers)
+        edited_text = f"{original}\n{line}" if original else line
+        entities = getattr(message, "entities", None) if message is not None else None
+        try:
+            if entities:
+                await query.edit_message_text(
+                    edited_text,
+                    entities=list(entities),
+                    api_kwargs=dict(ELICITATION_REMOVED_KEYBOARD),
+                )
+            else:
+                await query.edit_message_text(edited_text, api_kwargs=dict(ELICITATION_REMOVED_KEYBOARD))
+        except TelegramError as exc:
+            logger.warning("Elicitation answer record refused, clearing the keyboard instead: %s", exc)
+            await self._replace_elicitation_markup(query, None)
+
+    @staticmethod
+    def _elicitation_answer_line(
+        form: ElicitationRequest,
+        *,
+        answers: Mapping[str, tuple[str, ...]] | None,
+    ) -> str:
+        """One plain-text line naming what was tapped, mapping option values back to their labels."""
+        if answers is None:
+            return ELICITATION_SKIP_RECORD
+        numbered = len(form.questions) > 1
+        parts: list[str] = []
+        for index, question in enumerate(form.questions, start=1):
+            chosen = answers.get(question.field, ())
+            labels = [option.label or option.value for option in question.options if option.value in chosen]
+            prefix = f"{index}. " if numbered else ""
+            parts.append(f"{prefix}{', '.join(labels)}")
+        return f"{ELICITATION_ANSWER_RECORD_PREFIX} {ELICITATION_ANSWER_JOINER.join(parts)}"
 
     async def on_permission_request(self, request: PermissionRequest) -> None:
         if self._app is None:
