@@ -38,7 +38,8 @@ The file must be a JSON object. All keys are optional. Missing keys fall back to
     "allowed_usernames": ["alice", "@bob"],
     "schedule_languages": ["en", "es"],
     "group_require_mention": true,
-    "group_media_queue": true
+    "group_media_queue": true,
+    "status_reactions": "minimal"
   },
   "acp": {
     "agent_command": "npx @zed-industries/codex-acp",
@@ -94,6 +95,13 @@ ACP_TELEGRAM_GROUP_MEDIA_QUEUE
   downloads one with `telegram_fetch_attachment` when it actually needs it. Requires
   {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION`, since without a gate every message is already answered.
   Default: unset, so unmentioned group media is discarded.
+
+ACP_TELEGRAM_STATUS_REACTIONS
+  Lifecycle emoji the bot puts on the prompt message itself, independent of what the agent chooses to do.
+  Allowed values: `off`, `minimal`. `minimal` marks 👀 while the chat is busy, 🤔 while the agent works,
+  then 👍 when the answer is delivered or 💔 when the cycle ends without one; each new reaction replaces
+  the previous one on the same message.
+  Default: `off`, so the bot adds no reactions and only the agent's `telegram_set_message_reaction` calls appear.
 
 ACP_AGENT_COMMAND
   Command line used to launch the ACP agent process.
@@ -167,6 +175,7 @@ Key flags that map to config file or environment variable equivalents:
 | `--schedule-language` | `ACP_SCHEDULE_LANGUAGES` | `telegram.schedule_languages` |
 | `--group-require-mention` | `ACP_TELEGRAM_GROUP_REQUIRE_MENTION` | `telegram.group_require_mention` |
 | `--group-media-queue` | `ACP_TELEGRAM_GROUP_MEDIA_QUEUE` | `telegram.group_media_queue` |
+| `--status-reactions` | `ACP_TELEGRAM_STATUS_REACTIONS` | `telegram.status_reactions` |
 | `--agent-command` | `ACP_AGENT_COMMAND` | `acp.agent_command` |
 | `--restart-command` | `ACP_RESTART_COMMAND` | `acp.restart_command` |
 | `--permission-mode` | `ACP_PERMISSION_MODE` | `acp.permission_mode` |

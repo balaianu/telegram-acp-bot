@@ -40,6 +40,20 @@ The bot entrypoint is `telegram-acp-bot`.
   `file_id` reference and announced to the agent on its next answered prompt, where
   `telegram_fetch_attachment` can download it on demand. Needs `--group-require-mention`.
 
+- `--status-reactions`
+  Default: {term}`ACP_TELEGRAM_STATUS_REACTIONS`.
+  Allowed values: `off`, `minimal`.
+  In `minimal`, the bot puts its own emoji reaction on the message that carried the prompt and
+  replaces it as the cycle moves: 👀 when the chat is already busy, 🤔 while the agent works,
+  then 👍 when the answer is delivered or 💔 when the cycle ends without one.
+  In `off` (default) the bot adds no reactions of its own; an agent can still react through
+  `telegram_set_message_reaction`. A reaction that Telegram refuses is logged and dropped, never
+  retried, and never delays the reply.
+  Only these two levels exist: a finer level that also marks tool activity mid-cycle is not
+  implemented, because per-step reactions would fight the activity messages for the same message.
+  Telegram stores one reaction per chat on a message, so with `minimal` the bot's terminal emoji
+  replaces an emoji the agent put on that same message through `telegram_set_message_reaction`.
+
 - `--workspace`
   Default workspace used by `/new` when no workspace path is provided.
 

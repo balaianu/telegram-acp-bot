@@ -99,6 +99,7 @@ from telegram_acp_bot.telegram.models import (
     _RestartArgs,
     _ResumeArgs,
 )
+from telegram_acp_bot.telegram.reactions import PromptStatus, StatusReactionSender
 
 logger = logging.getLogger(__name__)
 APP_NOT_RUNNING_ERROR = "application is not running"
@@ -184,6 +185,7 @@ class TelegramBridge:
         # Background animation task per chat for `. .. ...` progress.
         self._compact_status_tasks: dict[int, asyncio.Task[None]] = {}
         self._suppressed_activity_chats: set[int] = set()
+        self._status_reactions = StatusReactionSender(config.status_reactions)
         self._activity_handlers: dict[ActivityMode, _ActivityModeHandler] = {
             "normal": _NormalActivityModeHandler(self),
             "compact": _CompactActivityModeHandler(self),
@@ -908,6 +910,7 @@ class TelegramBridge:
             logger.info("Prompt received: %s", log_text_preview(prompt_input.text))
 
         if lock.locked():
+            await self._set_status_reaction(chat_id=chat_id, update=update, status=PromptStatus.QUEUED)
             await self._queue_busy_prompt(chat_id=chat_id, prompt_input=prompt_input, update=update)
             return
 
@@ -918,6 +921,19 @@ class TelegramBridge:
                 context=context,
                 prompt_input=prompt_input,
             )
+
+    async def _set_status_reaction(self, *, chat_id: int, update: Update, status: PromptStatus) -> None:
+        """Mark the prompt message with the bot's own lifecycle reaction.
+
+        Reactions decorate the reply rather than carry it, so a headless bridge or a
+        message without an id is skipped instead of raising.
+        """
+        if self._app is None:
+            return
+        message_id = getattr(update.message, "message_id", None)
+        if message_id is None:
+            return
+        await self._status_reactions.set(bot=self._app.bot, chat_id=chat_id, message_id=message_id, status=status)
 
     async def _drain_prompt_queue(
         self,
@@ -933,6 +949,7 @@ class TelegramBridge:
         while True:
             with bind_log_context(chat_id=chat_id, prompt_cycle_id=current_input.cycle_id):
                 logger.info("Prompt cycle started")
+                await self._set_status_reaction(chat_id=chat_id, update=current_update, status=PromptStatus.THINKING)
                 reply = await self._request_reply(
                     update=current_update,
                     context=context,
@@ -954,6 +971,11 @@ class TelegramBridge:
                     await self._dispatch_reply(chat_id=chat_id, update=current_update, reply=reply)
                     with bind_log_context(chat_id=chat_id, prompt_cycle_id=current_input.cycle_id):
                         logger.info("Prompt cycle completed")
+                await self._set_status_reaction(
+                    chat_id=chat_id,
+                    update=current_update,
+                    status=PromptStatus.DONE if reply is not None else PromptStatus.ERROR,
+                )
                 await self._activity_handler(chat_id=chat_id).clear_chat_state(chat_id=chat_id)
 
                 if pending is None:

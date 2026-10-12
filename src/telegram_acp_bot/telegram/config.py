@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from telegram_acp_bot.acp.models import ActivityMode
+
+StatusReactionLevel = Literal["off", "minimal"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -20,6 +23,7 @@ class BotConfig:
     schedule_languages: tuple[str, ...] = ("en", "es")
     group_require_mention: bool = False
     group_media_queue: bool = False
+    status_reactions: StatusReactionLevel = "off"
 
     @property
     def compact_activity(self) -> bool:
@@ -37,6 +41,7 @@ def make_config(  # noqa: PLR0913
     schedule_languages: list[str] | None = None,
     group_require_mention: bool = False,
     group_media_queue: bool = False,
+    status_reactions: StatusReactionLevel = "off",
 ) -> BotConfig:
     normalized_usernames = {
         username.lstrip("@").strip().lower() for username in (allowed_usernames or []) if username.strip()
@@ -55,4 +60,5 @@ def make_config(  # noqa: PLR0913
         schedule_languages=normalized_schedule_languages,
         group_require_mention=group_require_mention,
         group_media_queue=group_media_queue,
+        status_reactions=status_reactions,
     )

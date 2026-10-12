@@ -372,6 +372,47 @@ def test_main_group_media_queue_defaults_to_off(mocker):
     assert config.group_media_queue is False
 
 
+def test_main_status_reactions_flag_sets_config(mocker):
+    """--status-reactions minimal makes the bot react on each prompt message."""
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--status-reactions", "minimal"]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.status_reactions == "minimal"
+
+
+def test_main_status_reactions_env_var_sets_config(mocker, monkeypatch):
+    """ACP_TELEGRAM_STATUS_REACTIONS=minimal enables reactions without a CLI flag."""
+    monkeypatch.setenv("ACP_TELEGRAM_STATUS_REACTIONS", "minimal")
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.status_reactions == "minimal"
+
+
+def test_main_status_reactions_defaults_to_off(mocker):
+    """Bot reactions stay out of the way until the operator asks for them."""
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.status_reactions == "off"
+
+
+def test_main_status_reactions_config_file_sets_config(mocker, monkeypatch, tmp_path):
+    """telegram.status_reactions in the config file is applied as a parser default."""
+    monkeypatch.delenv("ACP_TELEGRAM_STATUS_REACTIONS", raising=False)
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    config_path = _write_config(
+        tmp_path,
+        {
+            "telegram": {"bot_token": "T", "allowed_user_ids": [1], "status_reactions": "minimal"},
+            "acp": {"agent_command": "a"},
+        },
+    )
+    assert main(["--config", str(config_path)]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.status_reactions == "minimal"
+
+
 # Config file tests
 
 

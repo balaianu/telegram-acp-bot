@@ -11,6 +11,7 @@ _VALID_PERMISSION_MODES = frozenset({"ask", "approve", "deny"})
 _VALID_PERMISSION_EVENT_OUTPUTS = frozenset({"stdout", "off"})
 _VALID_LOG_FORMATS = frozenset({"text", "json"})
 _VALID_ACTIVITY_MODES = frozenset({"compact", "normal", "verbose"})
+_VALID_STATUS_REACTION_LEVELS = frozenset({"off", "minimal"})
 _MCP_SERVER_NAME_RE = re.compile(r"^[a-z0-9-_]+$")
 
 
@@ -79,6 +80,12 @@ def _validate_telegram_section(tg: dict[str, Any], path: Path) -> None:
             raise _err(path, "'telegram.schedule_languages' must be a list of strings")
     _require_optional_bool(tg, path, "group_require_mention")
     _require_optional_bool(tg, path, "group_media_queue")
+    if "status_reactions" in tg and tg["status_reactions"] not in _VALID_STATUS_REACTION_LEVELS:
+        raise _err(
+            path,
+            f"'telegram.status_reactions' must be one of"
+            f" {sorted(_VALID_STATUS_REACTION_LEVELS)}, got {tg['status_reactions']!r}",
+        )
 
 
 def _require_optional_bool(tg: dict[str, Any], path: Path, key: str) -> None:

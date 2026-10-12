@@ -79,7 +79,7 @@ from telegram_acp_bot.telegram.activity import (  # noqa: F401
 )
 from telegram_acp_bot.telegram.app import build_application, run_polling  # noqa: F401
 from telegram_acp_bot.telegram.bridge import TelegramBridge  # noqa: F401
-from telegram_acp_bot.telegram.config import BotConfig, make_config  # noqa: F401
+from telegram_acp_bot.telegram.config import BotConfig, StatusReactionLevel, make_config  # noqa: F401
 from telegram_acp_bot.telegram.constants import (  # noqa: F401
     ACTIVITY_MODE_CHOICES,
     ACTIVITY_MODE_HELP,

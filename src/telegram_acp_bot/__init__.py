@@ -32,13 +32,21 @@ from telegram_acp_bot.scheduled_tasks import (
     ScheduledTaskStore,
     default_scheduled_tasks_db_path,
 )
-from telegram_acp_bot.telegram.bot import RESTART_EXIT_CODE, BotConfig, TelegramBridge, make_config, run_polling
+from telegram_acp_bot.telegram.bot import (
+    RESTART_EXIT_CODE,
+    BotConfig,
+    StatusReactionLevel,
+    TelegramBridge,
+    make_config,
+    run_polling,
+)
 
 ALLOWED_USER_IDS_ENV = "TELEGRAM_ALLOWED_USER_IDS"
 ALLOWED_USERNAMES_ENV = "TELEGRAM_ALLOWED_USERNAMES"
 SCHEDULE_LANGUAGES_ENV = "ACP_SCHEDULE_LANGUAGES"
 GROUP_REQUIRE_MENTION_ENV = "ACP_TELEGRAM_GROUP_REQUIRE_MENTION"
 GROUP_MEDIA_QUEUE_ENV = "ACP_TELEGRAM_GROUP_MEDIA_QUEUE"
+STATUS_REACTIONS_ENV = "ACP_TELEGRAM_STATUS_REACTIONS"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
@@ -168,6 +176,18 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--status-reactions",
+        default=os.getenv(STATUS_REACTIONS_ENV, "off"),
+        choices=["off", "minimal"],
+        help=(
+            "React on the prompt message with the bot's own lifecycle emoji. "
+            "'off' (default) adds no bot reactions; the agent can still react through its MCP tool. "
+            "'minimal' marks 👀 while the chat is busy, 🤔 while the agent works, then 👍 or 💔 "
+            "when the cycle ends. "
+            f"Also set by {STATUS_REACTIONS_ENV} or `telegram.status_reactions`."
+        ),
+    )
+    parser.add_argument(
         "--scheduled-tasks-db",
         default=os.getenv(ACP_SCHEDULED_TASKS_DB_ENV, str(default_scheduled_tasks_db_path())),
         help="SQLite database path used for deferred scheduled follow-ups.",
@@ -241,6 +261,7 @@ def _apply_config_file_defaults(
         ("permission_event_output", "ACP_PERMISSION_EVENT_OUTPUT", acp_cfg.get("permission_event_output")),
         ("log_format", "ACP_LOG_FORMAT", acp_cfg.get("log_format")),
         ("activity_mode", "ACP_ACTIVITY_MODE", acp_cfg.get("activity_mode")),
+        ("status_reactions", STATUS_REACTIONS_ENV, tg.get("status_reactions")),
         ("scheduled_tasks_db", ACP_SCHEDULED_TASKS_DB_ENV, acp_cfg.get("scheduled_tasks_db")),
     ]
     updates |= {
@@ -480,6 +501,7 @@ def main(args: list[str] | None = None) -> int:
         schedule_languages=schedule_languages,
         group_require_mention=group_require_mention,
         group_media_queue=group_media_queue,
+        status_reactions=cast(StatusReactionLevel, opts.status_reactions),
     )
     service = AcpAgentService(
         SessionRegistry(),
