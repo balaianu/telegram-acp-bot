@@ -783,15 +783,23 @@ class AcpAgentService:
 
         with bind_log_context(chat_id=chat_id, session_id=session_id):
             logger.info("Elicitation requested: request_id=%s questions=%s", request_id, len(questions))
-        await handler(
-            ElicitationRequest(
-                chat_id=chat_id,
-                request_id=request_id,
-                title=form.requested_schema.title or message,
-                questions=questions,
-            )
-        )
         try:
+            try:
+                # The handler sends the keyboard, and a send can fail (flood control, a chat that
+                # vanished). Declining instead of propagating matches every other case the bot
+                # cannot render: the agent falls back to plain text rather than failing its tool.
+                await handler(
+                    ElicitationRequest(
+                        chat_id=chat_id,
+                        request_id=request_id,
+                        title=form.requested_schema.title or message,
+                        questions=questions,
+                    )
+                )
+            except Exception:
+                with bind_log_context(chat_id=chat_id, session_id=session_id):
+                    logger.exception("Elicitation could not be shown: request_id=%s", request_id)
+                return CancelElicitationResponse(action="cancel")
             try:
                 response = await asyncio.wait_for(future, timeout=300)
             except TimeoutError:

@@ -322,7 +322,9 @@ screen.
 Three limits to know about:
 
 - Only fields the agent offered as a choice of known options become buttons. A field you would have to type into, or an
-  elicitation that is not a form, is declined so the agent falls back to asking in plain text.
+  elicitation that is not a form, is declined so the agent falls back to asking in plain text. The same fallback happens
+  when Telegram refuses the question message itself (for example under flood control): no keyboard is left half-shown,
+  and the agent is told at once that the buttons did not arrive.
 - The question waits five minutes for a tap and is then cancelled, and the last `ELICITATION_FORMS_MAX` forms are
   remembered. When a new question pushes an older one out of that list, the older question is declined so the agent stops
   waiting for it and its buttons are taken off the message — a keyboard never outlives the answer it is asking for.

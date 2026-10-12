@@ -19,6 +19,7 @@ from acp.schema import (
     StringMultiSelectItems,
     TitledMultiSelectItems,
 )
+from telegram.error import NetworkError
 from telegram_acp_bot.acp.elicitation import elicitation_content, elicitation_form, elicitation_questions
 from telegram_acp_bot.acp.models import ElicitationRequest
 from tests.acp.support import *
@@ -506,6 +507,30 @@ async def test_a_question_that_stopped_waiting_tells_the_ui_to_drop_its_keyboard
     response = await service._decide_elicitation("Answer Questions", _one_question_mode())
     assert response.action == "cancel"
     (request,) = offered
+    assert closed == [(request.chat_id, request.request_id)]
+
+
+async def test_a_question_that_could_not_be_shown_is_declined_without_leaking_its_slot(
+    tmp_path: Path,
+) -> None:
+    service = await _start_service(tmp_path)
+    shown: list[ElicitationRequest] = []
+    closed: list[tuple[int, str]] = []
+
+    async def failing_handler(request: ElicitationRequest) -> None:
+        # Like the real bridge: the form is remembered, then Telegram refuses the send.
+        shown.append(request)
+        raise NetworkError
+
+    async def expiry(chat_id: int, request_id: str) -> None:
+        closed.append((chat_id, request_id))
+
+    service.set_elicitation_request_handler(failing_handler)
+    service.set_elicitation_expiry_handler(expiry)
+    response = await service._decide_elicitation("Answer Questions", _one_question_mode())
+    assert response.action == "cancel"
+    assert service._pending_elicitations == {}
+    (request,) = shown
     assert closed == [(request.chat_id, request.request_id)]
 
 
