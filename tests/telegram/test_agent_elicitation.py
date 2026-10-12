@@ -464,6 +464,33 @@ async def test_a_question_dropped_from_the_form_list_is_declined_and_loses_its_k
         assert request.request_id not in bridge._elicitation_selections
 
 
+async def test_a_burst_in_one_chat_does_not_evict_another_chat_open_question():
+    bridge, service = make_elicitation_bridge()
+    other_chat = ElicitationRequest(
+        chat_id=TEST_CHAT_ID + 1,
+        request_id="other-chat",
+        title="Answer Questions",
+        questions=(_question(),),
+    )
+    await bridge.on_elicitation_request(other_chat)
+    burst = [_request(request_id=f"burst{index}") for index in range(ELICITATION_FORMS_MAX + 2)]
+    for request in burst:
+        await bridge.on_elicitation_request(request)
+
+    assert "other-chat" in bridge._elicitation_forms
+    assert "other-chat" in bridge._elicitation_selections
+    # Only the burst's own chat is capped, and only its own oldest questions were declined.
+    assert sum(1 for form in bridge._elicitation_forms.values() if form.chat_id == TEST_CHAT_ID) == (
+        ELICITATION_FORMS_MAX
+    )
+    assert service.resolved == [(TEST_CHAT_ID, request.request_id, None) for request in burst[:2]]
+    assert all(edit["chat_id"] == TEST_CHAT_ID for edit in _bot(bridge).edited_reply_markups)
+
+    tap, query = _tap("other-chat", "0.0")
+    await bridge.on_elicitation_callback(tap, make_context())
+    assert query.answers == ["Answer sent."]
+
+
 async def test_a_denied_tap_answers_over_its_own_button():
     bridge, _ = make_elicitation_bridge(allowed_ids={42})
     request = _request()

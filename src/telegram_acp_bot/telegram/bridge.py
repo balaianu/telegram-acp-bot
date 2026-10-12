@@ -877,10 +877,14 @@ class TelegramBridge:
         Shrinking the list is not only a memory decision. The service waits on every question it
         asked, so a form dropped silently would leave its buttons on screen and hold the agent open
         for the whole timeout while the bridge denied knowing about it.
+
+        The cap is per chat: a burst of questions in one chat must not decline another chat's
+        still-open question, which is what a shared slice did.
         """
         self._elicitation_forms[request.request_id] = request
         self._elicitation_selections[request.request_id] = {}
-        for evicted in list(self._elicitation_forms.values())[:-ELICITATION_FORMS_MAX]:
+        same_chat = [form for form in self._elicitation_forms.values() if form.chat_id == request.chat_id]
+        for evicted in same_chat[:-ELICITATION_FORMS_MAX]:
             await self._retire_elicitation(evicted)
 
     async def _retire_elicitation(self, request: ElicitationRequest) -> None:

@@ -326,7 +326,8 @@ Three limits to know about:
   when Telegram refuses the question message itself (for example under flood control): no keyboard is left half-shown,
   and the agent is told at once that the buttons did not arrive.
 - The question waits five minutes for a tap and is then cancelled, and the last `ELICITATION_FORMS_MAX` forms are
-  remembered. When a new question pushes an older one out of that list, the older question is declined so the agent stops
+  remembered **in each chat** — questions in one chat never push out another chat's open question. When a new question
+  pushes an older one out of that list, the older question is declined so the agent stops
   waiting for it and its buttons are taken off the message — a keyboard never outlives the answer it is asking for.
   A button from an older keyboard, or one whose question the agent already stopped waiting for, answers with
   a toast instead of being sent twice.
