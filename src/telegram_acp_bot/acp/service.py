@@ -322,6 +322,7 @@ class AcpAgentService:
                     )
                 finally:
                     live.active_prompt_auto_approve = False
+                    self._close_session_elicitations(session_id=live.acp_session_id)
 
     def get_workspace(self, *, chat_id: int) -> Path | None:
         session = self._registry.get(chat_id)
@@ -729,6 +730,23 @@ class AcpAgentService:
             return response
 
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+    def _close_session_elicitations(self, *, session_id: str) -> None:
+        """Stop waiting on questions the agent abandoned while its turn was still open.
+
+        A JSON-RPC request cannot be cancelled from the server side, so a turn that ends underneath an open
+        question leaves us blocking until the deadline with buttons nobody can use. The turn ending is the
+        only signal; `_decide_elicitation` owns popping the entry and notifying the UI.
+        """
+        for request_id, pending in list(self._pending_elicitations.items()):
+            if pending.acp_session_id != session_id or pending.future.done():
+                continue
+            with bind_log_context(chat_id=pending.chat_id, session_id=session_id):
+                logger.info(
+                    "Elicitation abandoned by the agent: request_id=%s",
+                    request_id,
+                )
+            pending.future.set_result(CancelElicitationResponse(action="cancel"))
 
     async def _decide_elicitation(self, message: str, mode: ElicitationMode) -> CreateElicitationResponse:
         """Turn the agent's structured question into tap-able choices and wait for the user."""

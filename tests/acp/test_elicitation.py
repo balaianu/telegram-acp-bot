@@ -553,6 +553,50 @@ async def test_stopping_the_chat_also_closes_the_question_it_was_asked(tmp_path:
     assert closed == [(1, request_id)]
 
 
+async def test_a_question_left_open_when_the_turn_ends_is_closed_at_once(tmp_path: Path) -> None:
+    """A turn that ends underneath an open question must not keep its buttons alive for five minutes."""
+    service = await _start_service(tmp_path)
+    offered: list[ElicitationRequest] = []
+    closed: list[tuple[int, str]] = []
+
+    async def record(request: ElicitationRequest) -> None:
+        offered.append(request)
+
+    async def expiry(chat_id: int, request_id: str) -> None:
+        closed.append((chat_id, request_id))
+
+    service.set_elicitation_request_handler(record)
+    service.set_elicitation_expiry_handler(expiry)
+
+    pending = asyncio.create_task(service._decide_elicitation("Answer Questions", _one_question_mode()))
+    while not service._pending_elicitations:
+        await asyncio.sleep(0)
+
+    await service.prompt(chat_id=1, text="báo cáo đi")
+    response = await asyncio.wait_for(pending, timeout=1)
+
+    assert response.action == "cancel"
+    assert service._pending_elicitations == {}
+    (request,) = offered
+    assert closed == [(request.chat_id, request.request_id)]
+
+
+async def test_the_answer_sent_a_second_before_the_turn_ended_is_kept(tmp_path: Path) -> None:
+    service = await _start_service(tmp_path)
+    service.set_elicitation_request_handler(_ignore)
+
+    pending = asyncio.create_task(service._decide_elicitation("Answer Questions", _one_question_mode()))
+    while not service._pending_elicitations:
+        await asyncio.sleep(0)
+    (request_id,) = service._pending_elicitations
+    assert await service.respond_elicitation_request(chat_id=1, request_id=request_id, answers={"q0": ("month",)})
+
+    await service.prompt(chat_id=1, text="báo cáo đi")
+    response = await pending
+
+    assert response.action == "accept"
+
+
 async def _ignore(request: ElicitationRequest) -> None:
     del request
 

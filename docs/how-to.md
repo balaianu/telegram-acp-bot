@@ -314,8 +314,10 @@ waiting. A form of two questions arrives as one message listing both prompts and
 agent is answered only once every question has a choice.
 Once the answer reaches the agent the buttons are removed from the question message, so the same question cannot be
 answered twice and the message is left as a plain record of what was asked. A question the agent stops waiting for
-loses its buttons the same way, even if nobody answered it: a question still showing buttons is the one still waiting,
-so always tap the newest keyboard rather than an older one left on screen.
+loses its buttons the same way, even if nobody answered it: as soon as the agent's turn ends, a question that is still
+open is closed, and the five-minute deadline is only the backstop for a turn that never ends at all. A question still
+showing buttons is therefore the one still waiting, so always tap the newest keyboard rather than an older one left on
+screen.
 
 Three limits to know about:
 
