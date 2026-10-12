@@ -261,7 +261,9 @@ session like a normal prompt:
 ```
 
 Commands are matched in message text and in photo or document captions, and they follow the same rules as any other
-message: the allowlist, the group @mention gate, and the busy queue still apply.
+message: the allowlist, the group @mention gate, and the busy queue still apply. When Telegram adds the bot's own
+`@username` to a command picked from the menu, the bot strips that mention before forwarding, so the agent receives
+`/goal status`.
 
 Two limits to know about:
 

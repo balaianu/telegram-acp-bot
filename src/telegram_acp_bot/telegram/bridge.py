@@ -114,7 +114,7 @@ SCHEDULED_TASK_PREVIEW_MAX_CHARS = 72
 SCHEDULE_COMMAND_MIN_ARGS = 2
 _SCHEDULE_DELAY_RE = re.compile(r"^(\d+)(s|m|h|d)$", re.IGNORECASE)
 GROUP_CHAT_TYPES = frozenset({"group", "supergroup"})
-_AGENT_COMMAND_TOKEN_RE = re.compile(r"^/([A-Za-z0-9_-]{1,32})(?:@[A-Za-z0-9_]{1,32})?(?:\s|$)")
+_AGENT_COMMAND_TOKEN_RE = re.compile(r"^/([A-Za-z0-9_-]{1,32})(?:@([A-Za-z0-9_]{1,32}))?(?:\s|$)")
 
 
 def _text_mentions_handle(text: str | None, entities: tuple[MessageEntity, ...] | None, handle: str) -> bool:
@@ -164,6 +164,24 @@ def _with_pending_media(text: str, refs: tuple[dict[str, object], ...]) -> str:
 def _command_name(name: str) -> str:
     """Normalize a command name for comparison, whichever casing the agent published."""
     return name.removeprefix("/").lower()
+
+
+def _bot_handle(context: object) -> str:
+    """This bot's own Telegram username, lowercased and without the leading `@`."""
+    username = getattr(getattr(context, "bot", None), "username", None) or ""
+    return username.lstrip("@").strip().lower()
+
+
+def _without_own_mention(text: str, match: re.Match[str], handle: str) -> str:
+    """Drop the `@<this bot>` suffix Telegram appends to menu-picked commands, keeping the arguments.
+
+    Agents parse the raw prompt text, and an advertised command written `/goal@some_bot` is not a
+    command name they know, so the mention is removed before the text reaches `session/prompt`.
+    """
+    mention = match.group(2)
+    if mention is None or mention.lower() != handle.lower():
+        return text
+    return f"/{match.group(1)}{text[match.end(1) + len(mention) + 1 :]}"
 
 
 class _AgentCommandMessage(filters.MessageFilter):
@@ -970,10 +988,17 @@ class TelegramBridge:
             await self._reply(update, f"/{name} is not a command this agent advertises. See /cmds.")
             return
 
-        logger.info("Forwarding agent command on chat_id=%s text=%s", chat_id, log_text_preview(text))
-        await self.on_message(update, context)
+        forwarded = _without_own_mention(text, match, _bot_handle(context))
+        logger.info("Forwarding agent command on chat_id=%s text=%s", chat_id, log_text_preview(forwarded))
+        await self.on_message(update, context, prompt_text=forwarded)
 
-    async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def on_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        prompt_text: str | None = None,
+    ) -> None:
         if not await self._require_access(update):
             return
 
@@ -982,7 +1007,7 @@ class TelegramBridge:
                 await self._queue_unclaimed_group_media(update=update)
             return
 
-        prompt_input = await self._prompt_input(update=update, context=context)
+        prompt_input = await self._prompt_input(update=update, context=context, text_override=prompt_text)
         if prompt_input is None:
             return
 
@@ -1209,12 +1234,18 @@ class TelegramBridge:
         )
         return started is not None
 
-    async def _prompt_input(self, *, update: Update, context: ContextTypes.DEFAULT_TYPE) -> _PromptInput | None:
+    async def _prompt_input(
+        self,
+        *,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        text_override: str | None = None,
+    ) -> _PromptInput | None:
         message = update.message
         if message is None:
             return None
         chat_id = self._chat_id(update)
-        text = message.text or message.caption or ""
+        text = text_override if text_override is not None else (message.text or message.caption or "")
         images = await self._extract_prompt_images(message=message, context=context)
         files = await self._extract_prompt_files(message=message, context=context)
         if not text and not images and not files:
@@ -1627,8 +1658,7 @@ class TelegramBridge:
             return False
 
         message = update.message
-        username = getattr(getattr(context, "bot", None), "username", None) or ""
-        handle = username.lstrip("@").strip().lower()
+        handle = _bot_handle(context)
         if message is not None and handle:
             if _text_mentions_handle(message.text, getattr(message, "entities", None), handle):
                 return False

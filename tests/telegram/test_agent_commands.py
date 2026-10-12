@@ -83,13 +83,22 @@ async def test_hyphenated_advertised_agent_command_is_forwarded():
     assert [text for text, _ in service.prompts] == ["/mcp-config list"]
 
 
-async def test_forwarded_command_strips_the_bot_mention_from_the_leading_token_only():
+async def test_command_mentioning_this_bot_is_forwarded_without_the_mention():
     bridge, service = make_commands_bridge((GOAL_COMMAND,))
     update = make_update(text="/goal@echo_bot status")
 
     await bridge.on_agent_command(update, make_context())
 
-    assert [text for text, _ in service.prompts] == ["/goal@echo_bot status"]
+    assert [text for text, _ in service.prompts] == ["/goal status"]
+
+
+async def test_command_mentioning_another_bot_keeps_its_own_address():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+    update = make_update(text="/goal@other_bot status")
+
+    await bridge.on_agent_command(update, make_context())
+
+    assert [text for text, _ in service.prompts] == ["/goal@other_bot status"]
 
 
 async def test_unadvertised_slash_command_is_rejected_with_a_hint_to_cmds():
@@ -114,6 +123,20 @@ async def test_agent_command_in_a_photo_caption_is_forwarded_with_the_media():
     assert [text for text, _ in service.prompts] == ["/goal review"]
     expected = base64.b64encode(b"bytes").decode("ascii")
     assert [[image.data_base64 for image in images] for _, images in service.prompts] == [[expected]]
+
+
+async def test_own_mention_is_stripped_from_a_bare_command_and_from_a_caption():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+    context = make_context()
+    context.bot.files["photo-1"] = b"bytes"
+
+    await bridge.on_agent_command(make_update(text="/goal@echo_bot"), context)
+    await bridge.on_agent_command(
+        make_update(caption="/goal@echo_bot status", photo=[SimpleNamespace(file_id="photo-1")]),
+        context,
+    )
+
+    assert [text for text, _ in service.prompts] == ["/goal", "/goal status"]
 
 
 async def test_agent_command_gate_ignores_text_without_a_leading_command_token():
