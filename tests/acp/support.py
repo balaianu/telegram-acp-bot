@@ -131,6 +131,7 @@ class FakeConnection:
         self._session_id = session_id
         self.new_session_mcp_servers: list | None = None
         self.load_session_mcp_servers: list | None = None
+        self.connect_kwargs: dict[str, bool] = {}
 
     async def initialize(self, **kwargs):
         self.initialized = True

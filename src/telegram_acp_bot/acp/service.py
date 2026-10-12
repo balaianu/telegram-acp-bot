@@ -580,7 +580,8 @@ class AcpAgentService:
             activity_reporter=self._forward_activity_event,
             commands_reporter=self._store_available_commands,
         )
-        connection = self._connector(client, process.stdin, process.stdout)
+        # Without this the SDK router answers elicitation/create with method_not_found.
+        connection = self._connector(client, process.stdin, process.stdout, use_unstable_protocol=True)
         try:
             with bind_log_context(chat_id=chat_id):
                 logger.debug("Initializing ACP connection for chat_id=%s", chat_id)

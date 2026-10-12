@@ -20,7 +20,7 @@ async def test_new_session_creates_missing_workspace(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -78,7 +78,7 @@ async def test_new_session_passes_stdio_limit_to_spawner(tmp_path: Path):
         limits.append(cast(int, kwargs["limit"]))
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         conn = FakeConnection(session_id="s-limit")
         conn.client = client
@@ -104,7 +104,7 @@ async def test_new_session_times_out_when_agent_does_not_handshake(tmp_path: Pat
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -130,7 +130,7 @@ async def test_new_session_times_out_during_session_new(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -155,7 +155,7 @@ async def test_new_session_and_prompt(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         assert input_stream is process.stdin
         assert output_stream is process.stdout
         connection.client = client
@@ -192,7 +192,7 @@ async def test_load_session_and_supports_session_loading(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -221,7 +221,7 @@ async def test_service_passes_configured_mcp_servers_to_new_and_load_session(tmp
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -250,7 +250,7 @@ async def test_service_persists_channel_session_mapping(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -343,7 +343,7 @@ async def test_load_session_rejects_when_capability_is_false(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -377,7 +377,7 @@ async def test_load_session_replaces_existing_and_shuts_down(tmp_path: Path):
         calls.append(process)
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection = FakeConnection(supports_load_session=True)
         connection.client = client
@@ -406,7 +406,7 @@ async def test_load_session_times_out(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -447,7 +447,7 @@ async def test_list_resumable_sessions_supported_and_filtered(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -472,7 +472,7 @@ async def test_list_resumable_sessions_returns_none_when_not_supported(tmp_path:
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -495,7 +495,7 @@ async def test_list_resumable_sessions_live_without_list_support_returns_none(tm
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -527,7 +527,7 @@ async def test_list_resumable_sessions_uses_live_connection_branch(tmp_path: Pat
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -553,7 +553,7 @@ async def test_list_resumable_sessions_returns_none_when_session_capabilities_mi
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del client, input_stream, output_stream
         return connection
 
@@ -581,7 +581,7 @@ async def test_prompt_wraps_stdio_limit_error(tmp_path: Path) -> None:
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -600,7 +600,7 @@ async def test_prompt_reraises_unrelated_value_error(tmp_path: Path) -> None:
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -619,7 +619,7 @@ async def test_prompt_resets_active_auto_approve_on_prompt_error(tmp_path: Path)
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -652,7 +652,7 @@ async def test_prompt_resolves_file_uri_resource_as_image(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -684,7 +684,7 @@ async def test_prompt_resolves_file_uri_resource_as_document(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -717,7 +717,7 @@ async def test_prompt_reports_warning_for_outside_workspace_file_uri(tmp_path: P
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -749,7 +749,7 @@ async def test_prompt_resolves_percent_encoded_file_uri(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -770,7 +770,7 @@ async def test_cancel_and_stop_lifecycle(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -799,7 +799,7 @@ async def test_permission_policy_session_and_next_prompt(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -847,7 +847,7 @@ async def test_decide_permission_states(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -896,7 +896,7 @@ async def test_decide_permission_ask_mode_with_handler(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -932,7 +932,7 @@ async def test_respond_permission_request_always_enables_session_approve(tmp_pat
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -991,7 +991,7 @@ async def test_decide_permission_auto_approve_supports_allow_always_only(tmp_pat
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -1021,7 +1021,7 @@ async def test_stop_cancels_pending_permission_requests(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -1061,7 +1061,7 @@ async def test_decide_permission_timeout_returns_cancelled(tmp_path: Path, monke
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -1149,7 +1149,7 @@ async def test_forward_activity_event_routes_to_matching_chat(tmp_path: Path):
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection
@@ -1183,7 +1183,7 @@ async def test_new_session_replaces_previous_and_shuts_down(tmp_path: Path, monk
         calls.append(process)
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         conn = FakeConnection(session_id=f"s-{len(calls)}")
         conn.client = client
@@ -1230,7 +1230,7 @@ async def test_new_session_passes_start_new_session_to_spawner(tmp_path: Path):
         spawn_kwargs.append(dict(kwargs))
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         conn = FakeConnection(session_id="s")
         conn.client = client
@@ -1505,7 +1505,7 @@ def _commands_service(connection: CommandsConnection) -> AcpAgentService:
         del program, args, kwargs
         return FakeProcess()
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
         return connection

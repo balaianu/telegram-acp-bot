@@ -91,9 +91,10 @@ async def _start_service(
         del program, args, kwargs
         return process
 
-    def fake_connect(client, input_stream, output_stream):
+    def fake_connect(client, input_stream, output_stream, **kwargs):
         del input_stream, output_stream
         connection.client = client
+        connection.connect_kwargs = kwargs
         return connection
 
     service = AcpAgentService(
@@ -227,6 +228,12 @@ async def test_initialize_advertises_form_elicitation(tmp_path: Path) -> None:
     capabilities = cast(ClientCapabilities, connection.initialize_kwargs["client_capabilities"])
     assert capabilities.elicitation is not None
     assert capabilities.elicitation.form is not None
+
+
+async def test_the_connection_turns_on_the_unstable_protocol(tmp_path: Path) -> None:
+    connection = FakeConnection(session_id="unstable")
+    await _start_service(tmp_path, connection=connection)
+    assert connection.connect_kwargs == {"use_unstable_protocol": True}
 
 
 class _CapabilityRecordingConnection(FakeConnection):

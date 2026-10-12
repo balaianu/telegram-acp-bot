@@ -37,7 +37,9 @@ def _package_version() -> str:
 class AcpConnectionFactory(Protocol):
     """Factory protocol to connect a client implementation to an ACP agent."""
 
-    def __call__(self, client: object, input_stream: object, output_stream: object) -> ClientSideConnection: ...
+    def __call__(
+        self, client: object, input_stream: object, output_stream: object, *, use_unstable_protocol: bool
+    ) -> ClientSideConnection: ...
 
 
 class AcpSpawnFn(Protocol):
