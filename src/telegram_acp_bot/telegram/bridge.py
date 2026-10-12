@@ -975,6 +975,9 @@ class TelegramBridge:
         if not await self._require_access(update):
             return
 
+        if await self._silently_shelve_group_message(update, context):
+            return
+
         message = update.message
         text = "" if message is None else (message.text or message.caption or "")
         match = _AGENT_COMMAND_TOKEN_RE.match(text)
@@ -1002,9 +1005,7 @@ class TelegramBridge:
         if not await self._require_access(update):
             return
 
-        if self._config.group_require_mention and self._ignores_unmentioned_group_message(update, context):
-            if self._config.group_media_queue:
-                await self._queue_unclaimed_group_media(update=update)
+        if await self._silently_shelve_group_message(update, context):
             return
 
         prompt_input = await self._prompt_input(update=update, context=context, text_override=prompt_text)
@@ -1671,6 +1672,18 @@ class TelegramBridge:
 
         chat_id = chat.id if chat is not None else None
         logger.info("Group message in chat=%s ignored: no @%s mention", chat_id, handle)
+        return True
+
+    async def _silently_shelve_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """True when the mention rule hides this message, which is then queued or dropped without a reply.
+
+        Any handler that may answer a plain message has to consult this before saying anything, so an
+        unaddressed group post never draws the bot into the conversation.
+        """
+        if not self._config.group_require_mention or not self._ignores_unmentioned_group_message(update, context):
+            return False
+        if self._config.group_media_queue:
+            await self._queue_unclaimed_group_media(update=update)
         return True
 
     async def _queue_unclaimed_group_media(self, *, update: Update) -> None:

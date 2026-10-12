@@ -16,9 +16,20 @@ def _fake_message(*, text: str | None = None, caption: str | None = None) -> Mes
     return cast(Message, SimpleNamespace(text=text, caption=caption))
 
 
-def make_commands_bridge(commands: tuple[AgentCommand, ...] | None) -> tuple[TelegramBridge, AgentCommandsService]:
+def make_commands_bridge(
+    commands: tuple[AgentCommand, ...] | None,
+    *,
+    group_require_mention: bool = False,
+    group_media_queue: bool = False,
+) -> tuple[TelegramBridge, AgentCommandsService]:
     service = AgentCommandsService(commands)
-    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".")
+    config = make_config(
+        token="TOKEN",
+        allowed_user_ids=[],
+        workspace=".",
+        group_require_mention=group_require_mention,
+        group_media_queue=group_media_queue,
+    )
     return TelegramBridge(config=config, agent_service=cast(AgentService, service)), service
 
 
@@ -180,3 +191,56 @@ async def test_agent_command_filter_matches_a_leading_token_in_text_or_caption()
     assert gate.filter(_fake_message(caption="/goal review"))
     assert not gate.filter(_fake_message(text="hello /goal"))
     assert not gate.filter(_fake_message())
+
+
+async def test_unmentioned_group_command_is_ignored_without_a_reply():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,), group_require_mention=True)
+    update = make_update(text="/qwe poke", chat_type="group")
+
+    await bridge.on_agent_command(update, make_context())
+
+    assert update.message is not None
+    assert update.message.replies == []
+    assert service.prompts == []
+
+
+async def test_unmentioned_advertised_group_command_is_not_forwarded():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,), group_require_mention=True)
+
+    await bridge.on_agent_command(make_update(text="/goal status", chat_type="group"), make_context())
+
+    assert service.prompts == []
+
+
+async def test_group_command_mentioning_the_bot_is_forwarded_without_the_mention():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,), group_require_mention=True)
+
+    await bridge.on_agent_command(make_update(text="/goal@echo_bot status", chat_type="group"), make_context())
+
+    assert [text for text, _ in service.prompts] == ["/goal status"]
+
+
+async def test_unmentioned_group_command_caption_queues_its_photo_once():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,), group_require_mention=True, group_media_queue=True)
+
+    await bridge.on_agent_command(
+        make_update(caption="/qwe poke", chat_type="group", photo=[SimpleNamespace(file_id="photo-1")]),
+        make_context(),
+    )
+
+    assert service.pending_media == [(100, 1, "photo-1", "image/jpeg")]
+    assert service.prompts == []
+
+
+async def test_mentioned_group_command_photo_is_forwarded_and_not_queued():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,), group_require_mention=True, group_media_queue=True)
+    context = make_context()
+    context.bot.files["photo-1"] = b"bytes"
+
+    await bridge.on_agent_command(
+        make_update(caption="/goal@echo_bot review", chat_type="group", photo=[SimpleNamespace(file_id="photo-1")]),
+        context,
+    )
+
+    assert [text for text, _ in service.prompts] == ["/goal review"]
+    assert service.pending_media == []

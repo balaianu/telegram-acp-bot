@@ -506,6 +506,7 @@ class AgentCommandsService(ImplicitSessionServiceBase):
         self.commands = commands
         self.prompts: list[tuple[str, tuple[PromptImage, ...]]] = []
         self.new_session_calls: list[tuple[int, Path]] = []
+        self.pending_media: list[tuple[int, int, str, str]] = []
 
     async def new_session(self, *, chat_id: int, workspace: Path) -> str:
         self.new_session_calls.append((chat_id, workspace))
@@ -520,6 +521,14 @@ class AgentCommandsService(ImplicitSessionServiceBase):
         del chat_id, files
         self.prompts.append((text, images))
         return AgentReply(text="ok")
+
+    async def record_pending_media(self, *, chat_id: int, message_id: int, file_id: str, mime_type: str) -> None:
+        self.pending_media.append((chat_id, message_id, file_id, mime_type))
+
+    async def take_pending_media(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
+        taken = [ref for ref in self.pending_media if ref[0] == chat_id]
+        self.pending_media = [ref for ref in self.pending_media if ref[0] != chat_id]
+        return tuple({"file_id": file_id, "mime_type": mime_type} for _, _, file_id, mime_type in taken)
 
 
 class FailingImplicitService(ImplicitSessionServiceBase):
