@@ -1436,6 +1436,13 @@ class TelegramBridge:
                 return True
 
         await self._reply(update, "Access denied for this bot.")
+        chat = update.effective_chat
+        logger.info(
+            "Blocked sender user_id=%s username=%s in chat=%s — add it to the allowlist to grant access",
+            user_id,
+            username_raw,
+            chat.id if chat is not None else None,
+        )
         return False
 
     def _ignores_unmentioned_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
