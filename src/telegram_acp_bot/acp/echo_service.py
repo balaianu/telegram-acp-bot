@@ -162,6 +162,12 @@ class EchoAgentService:
     ) -> None:
         del handler
 
+    def set_elicitation_expiry_handler(
+        self,
+        handler: Callable[[int, str], Awaitable[None]] | None,
+    ) -> None:
+        del handler
+
     async def respond_elicitation_request(
         self,
         *,

@@ -59,6 +59,7 @@ class ElicitationService(ImplicitSessionServiceBase):
         self.resolve = resolve
         self.error = error
         self.handler: Callable[[ElicitationRequest], Awaitable[None]] | None = None
+        self.expiry_handler: Callable[[int, str], Awaitable[None]] | None = None
         self.resolved: list[tuple[int, str, Mapping[str, tuple[str, ...]] | None]] = []
 
     def set_elicitation_request_handler(
@@ -66,6 +67,12 @@ class ElicitationService(ImplicitSessionServiceBase):
         handler: Callable[[ElicitationRequest], Awaitable[None]] | None,
     ) -> None:
         self.handler = handler
+
+    def set_elicitation_expiry_handler(
+        self,
+        handler: Callable[[int, str], Awaitable[None]] | None,
+    ) -> None:
+        self.expiry_handler = handler
 
     async def respond_elicitation_request(
         self,
@@ -512,3 +519,84 @@ async def test_a_real_edit_failure_still_answers_with_an_error():
 
     assert query.answers == ["Skipped.", "Answering this question failed."]
     assert service.resolved == [(TEST_CHAT_ID, request.request_id, None)]
+
+
+KEYBOARD_CLEAR_REFUSED = BadRequest("Bad chat")
+
+
+class _RefusingMarkupBot(DummyBot):
+    """Bot whose keyboard removal fails, the way an edit Telegram refuses can."""
+
+    async def edit_message_reply_markup(self, **kwargs: object) -> None:
+        del kwargs
+        raise KEYBOARD_CLEAR_REFUSED
+
+
+async def test_a_question_the_agent_abandoned_loses_its_keyboard():
+    bridge, service = make_elicitation_bridge()
+    request = _request(_question())
+
+    await bridge.on_elicitation_request(request)
+
+    assert service.expiry_handler == bridge.on_elicitation_expired
+    message_id = bridge._elicitation_messages[request.request_id]
+
+    await bridge.on_elicitation_expired(TEST_CHAT_ID, request.request_id)
+
+    assert _bot(bridge).edited_reply_markups == [
+        {
+            "chat_id": TEST_CHAT_ID,
+            "message_id": message_id,
+            "api_kwargs": {"reply_markup": {"inline_keyboard": []}},
+        }
+    ]
+    assert bridge._elicitation_forms == {}
+    assert bridge._elicitation_messages == {}
+    assert bridge._elicitation_selections == {}
+
+
+async def test_a_question_the_user_already_answered_is_not_touched_again():
+    bridge, _ = make_elicitation_bridge()
+    request = _request(_question())
+
+    await bridge.on_elicitation_request(request)
+    update, query = _tap(request.request_id, "0.0")
+    await bridge.on_elicitation_callback(update, make_context())
+    assert query.answers == ["Answer sent."]
+
+    await bridge.on_elicitation_expired(TEST_CHAT_ID, request.request_id)
+
+    assert _bot(bridge).edited_reply_markups == []
+
+
+async def test_a_keyboard_telegram_refuses_to_clear_is_only_logged():
+    bridge, _ = make_elicitation_bridge()
+    request = _request(_question())
+
+    await bridge.on_elicitation_request(request)
+    assert bridge._app is not None
+    bridge._app.bot = _RefusingMarkupBot()
+
+    await bridge.on_elicitation_expired(TEST_CHAT_ID, request.request_id)
+
+    assert bridge._elicitation_forms == {}
+
+
+async def test_an_expired_question_is_ignored_before_the_bot_is_running():
+    bridge, _ = make_elicitation_bridge()
+    request = _request(_question())
+
+    await bridge.on_elicitation_request(request)
+    bridge._app = None
+
+    await bridge.on_elicitation_expired(TEST_CHAT_ID, request.request_id)
+
+    assert bridge._elicitation_forms == {request.request_id: request}
+
+
+async def test_a_close_for_a_question_the_bridge_never_offered_does_nothing():
+    bridge, _ = make_elicitation_bridge()
+
+    await bridge.on_elicitation_expired(TEST_CHAT_ID, "missing")
+
+    assert _bot(bridge).edited_reply_markups == []

@@ -480,6 +480,79 @@ async def test_an_unanswered_elicitation_is_cancelled_after_the_timeout(
     assert service._pending_elicitations == {}
 
 
+async def test_a_question_that_stopped_waiting_tells_the_ui_to_drop_its_keyboard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = await _start_service(tmp_path)
+    offered: list[ElicitationRequest] = []
+    closed: list[tuple[int, str]] = []
+
+    async def record(request: ElicitationRequest) -> None:
+        offered.append(request)
+
+    async def expiry(chat_id: int, request_id: str) -> None:
+        closed.append((chat_id, request_id))
+
+    service.set_elicitation_request_handler(record)
+    service.set_elicitation_expiry_handler(expiry)
+
+    async def fake_wait_for(awaitable: asyncio.Future, **kwargs: object) -> object:
+        del kwargs
+        awaitable.cancel()
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    response = await service._decide_elicitation("Answer Questions", _one_question_mode())
+    assert response.action == "cancel"
+    (request,) = offered
+    assert closed == [(request.chat_id, request.request_id)]
+
+
+async def test_a_question_the_user_answered_is_reported_closed_too(tmp_path: Path) -> None:
+    service = await _start_service(tmp_path)
+    asked: list[str] = []
+    closed: list[tuple[int, str]] = []
+
+    async def handler(request: ElicitationRequest) -> None:
+        asked.append(request.request_id)
+        await service.respond_elicitation_request(
+            chat_id=request.chat_id,
+            request_id=request.request_id,
+            answers={"q0": ("category",)},
+        )
+
+    async def expiry(chat_id: int, request_id: str) -> None:
+        closed.append((chat_id, request_id))
+
+    service.set_elicitation_request_handler(handler)
+    service.set_elicitation_expiry_handler(expiry)
+    response = await service._decide_elicitation("Answer Questions", _one_question_mode())
+    assert response.action == "accept"
+    assert closed == [(1, asked[0])]
+
+
+async def test_stopping_the_chat_also_closes_the_question_it_was_asked(tmp_path: Path) -> None:
+    service = await _start_service(tmp_path)
+    closed: list[tuple[int, str]] = []
+
+    async def expiry(chat_id: int, request_id: str) -> None:
+        closed.append((chat_id, request_id))
+
+    service.set_elicitation_request_handler(_ignore)
+    service.set_elicitation_expiry_handler(expiry)
+
+    pending = asyncio.create_task(service._decide_elicitation("Answer Questions", _one_question_mode()))
+    while not service._pending_elicitations:
+        await asyncio.sleep(0)
+    (request_id,) = service._pending_elicitations
+
+    assert await service.stop(chat_id=1)
+    response = await pending
+    assert response.action == "cancel"
+    assert closed == [(1, request_id)]
+
+
 async def _ignore(request: ElicitationRequest) -> None:
     del request
 

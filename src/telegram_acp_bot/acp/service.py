@@ -147,6 +147,7 @@ class AcpAgentService:
         self._permission_prompt_handler: Callable[[PermissionRequest], Awaitable[None]] | None = None
         self._pending_elicitations: dict[str, _PendingElicitation] = {}
         self._elicitation_prompt_handler: Callable[[ElicitationRequest], Awaitable[None]] | None = None
+        self._elicitation_expiry_handler: Callable[[int, str], Awaitable[None]] | None = None
         self._activity_event_handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None = None
         self._channel_state_lock = asyncio.Lock()
 
@@ -414,6 +415,12 @@ class AcpAgentService:
         handler: Callable[[ElicitationRequest], Awaitable[None]] | None,
     ) -> None:
         self._elicitation_prompt_handler = handler
+
+    def set_elicitation_expiry_handler(
+        self,
+        handler: Callable[[int, str], Awaitable[None]] | None,
+    ) -> None:
+        self._elicitation_expiry_handler = handler
 
     def set_activity_event_handler(
         self,
@@ -767,11 +774,19 @@ class AcpAgentService:
             )
         )
         try:
-            response = await asyncio.wait_for(future, timeout=300)
-        except TimeoutError:
-            response = CancelElicitationResponse(action="cancel")
+            try:
+                response = await asyncio.wait_for(future, timeout=300)
+            except TimeoutError:
+                with bind_log_context(chat_id=chat_id, session_id=session_id):
+                    logger.info("Elicitation timed out: request_id=%s", request_id)
+                response = CancelElicitationResponse(action="cancel")
         finally:
             self._pending_elicitations.pop(request_id, None)
+            # The question stopped waiting, whether or not it was answered: the UI has to take the
+            # keyboard away, otherwise a dead question looks exactly like a live one.
+            expiry = self._elicitation_expiry_handler
+            if expiry is not None:
+                await expiry(chat_id, request_id)
         return response
 
     @staticmethod

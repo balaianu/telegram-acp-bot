@@ -276,6 +276,8 @@ class TelegramBridge:
         self._elicitation_forms: dict[str, ElicitationRequest] = {}
         # Option indexes chosen per pending elicitation, keyed by the schema field being answered.
         self._elicitation_selections: dict[str, dict[str, list[int]]] = {}
+        # Question message per pending elicitation, so its keyboard can be removed once it stops waiting.
+        self._elicitation_messages: dict[str, int | None] = {}
         self._status_reactions = StatusReactionSender(config.status_reactions)
         self._activity_handlers: dict[ActivityMode, _ActivityModeHandler] = {
             "normal": _NormalActivityModeHandler(self),
@@ -288,6 +290,8 @@ class TelegramBridge:
             self._agent_service.set_activity_event_handler(self.on_activity_event)
         if hasattr(self._agent_service, "set_elicitation_request_handler"):
             self._agent_service.set_elicitation_request_handler(self.on_elicitation_request)
+        if hasattr(self._agent_service, "set_elicitation_expiry_handler"):
+            self._agent_service.set_elicitation_expiry_handler(self.on_elicitation_expired)
 
     def install(self, app: Application) -> None:
         self._app = app
@@ -767,6 +771,7 @@ class TelegramBridge:
             text=self._format_elicitation_text(request),
             reply_markup=self._elicitation_keyboard(request, selections={}),
         )
+        self._elicitation_messages[request.request_id] = getattr(sent, "message_id", None)
         with bind_log_context(chat_id=request.chat_id):
             logger.info(
                 "Elicitation offered: request_id=%s questions=%s message_id=%s",
@@ -791,6 +796,7 @@ class TelegramBridge:
                 return
             form = self._elicitation_forms.get(parts[1])
             if form is None:
+                logger.warning("Elicitation tap on a question that stopped waiting: request_id=%s", parts[1])
                 await query.answer("This question is no longer waiting for an answer.")
                 return
             await self._take_elicitation_choice(form=form, token=parts[2], query=query)
@@ -798,8 +804,35 @@ class TelegramBridge:
             logger.exception("Unhandled error while processing elicitation callback")
             await query.answer("Answering this question failed.")
 
+    async def on_elicitation_expired(self, chat_id: int, request_id: str) -> None:
+        """Take the keyboard off a question the agent stopped waiting for, answered or not.
+
+        Without this, an abandoned question keeps looking tappable next to a live one, and every tap on
+        it only flashes a toast the user can easily miss.
+        """
+        if self._app is None:
+            return
+        unanswered = self._elicitation_forms.pop(request_id, None) is not None
+        message_id = self._elicitation_messages.pop(request_id, None)
+        self._elicitation_selections.pop(request_id, None)
+        if not unanswered or message_id is None:
+            return
+        with bind_log_context(chat_id=chat_id):
+            logger.info("Elicitation expired: request_id=%s message_id=%s", request_id, message_id)
+        try:
+            await self._app.bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=message_id,
+                api_kwargs=dict(ELICITATION_REMOVED_KEYBOARD),
+            )
+        except BadRequest as exc:
+            with bind_log_context(chat_id=chat_id):
+                logger.warning("Elicitation keyboard left in place: request_id=%s error=%s", request_id, exc)
+
     async def _take_elicitation_choice(self, *, form: ElicitationRequest, token: str, query: CallbackQuery) -> None:
         """Apply one button of an offered form: skip, submit the picks, or record a tap."""
+        with bind_log_context(chat_id=form.chat_id):
+            logger.info("Elicitation tapped: request_id=%s token=%s", form.request_id, token)
         if token == ELICITATION_SKIP_TOKEN:
             await self._resolve_elicitation(form, answers=None, query=query, toast="Skipped.")
             return
@@ -848,6 +881,7 @@ class TelegramBridge:
     def _forget_elicitation(self, request_id: str) -> None:
         self._elicitation_forms.pop(request_id, None)
         self._elicitation_selections.pop(request_id, None)
+        self._elicitation_messages.pop(request_id, None)
 
     @staticmethod
     def _format_elicitation_text(request: ElicitationRequest) -> str:

@@ -313,7 +313,9 @@ options. `⏭️ Skip this question` declines the elicitation, which lets the ag
 waiting. A form of two questions arrives as one message listing both prompts and offering both sets of buttons; the
 agent is answered only once every question has a choice.
 Once the answer reaches the agent the buttons are removed from the question message, so the same question cannot be
-answered twice and the message is left as a plain record of what was asked.
+answered twice and the message is left as a plain record of what was asked. A question the agent stops waiting for
+loses its buttons the same way, even if nobody answered it: a question still showing buttons is the one still waiting,
+so always tap the newest keyboard rather than an older one left on screen.
 
 Three limits to know about:
 

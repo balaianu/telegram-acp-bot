@@ -144,6 +144,11 @@ class AgentService(Protocol):
         handler: Callable[[ElicitationRequest], Awaitable[None]] | None,
     ) -> None: ...
 
+    def set_elicitation_expiry_handler(
+        self,
+        handler: Callable[[int, str], Awaitable[None]] | None,
+    ) -> None: ...
+
     async def respond_elicitation_request(
         self,
         *,
