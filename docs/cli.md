@@ -48,7 +48,7 @@ The bot entrypoint is `telegram-acp-bot`.
   then 👍 when the answer is delivered or 💔 when the cycle ends without one.
   In `off` (default) the bot adds no reactions of its own; an agent can still react through
   `telegram_set_message_reaction`. A reaction that Telegram refuses is logged and dropped, never
-  retried, and never delays the reply.
+  retried, and never delays the reply; each reaction that lands is logged at `INFO`.
   Only these two levels exist: a finer level that also marks tool activity mid-cycle is not
   implemented, because per-step reactions would fight the activity messages for the same message.
   Telegram stores one reaction per chat on a message, so with `minimal` the bot's terminal emoji

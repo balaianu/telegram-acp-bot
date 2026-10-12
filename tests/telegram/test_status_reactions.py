@@ -195,12 +195,13 @@ async def test_disabled_sender_does_not_call_the_api():
 
 
 @pytest.mark.asyncio
-async def test_enabled_sender_reacts_on_the_given_message():
+async def test_enabled_sender_reacts_on_the_given_message(caplog):
     bot = DummyBot()
 
-    await StatusReactionSender("minimal").set(
-        bot=cast(Bot, bot), chat_id=TEST_CHAT_ID, message_id=QUEUED_TARGET_MESSAGE_ID, status=PromptStatus.QUEUED
-    )
+    with caplog.at_level(logging.INFO):
+        await StatusReactionSender("minimal").set(
+            bot=cast(Bot, bot), chat_id=TEST_CHAT_ID, message_id=QUEUED_TARGET_MESSAGE_ID, status=PromptStatus.QUEUED
+        )
 
     assert bot.reactions == [
         {
@@ -209,6 +210,7 @@ async def test_enabled_sender_reacts_on_the_given_message():
             "reaction": STATUS_REACTION_EMOJI[PromptStatus.QUEUED],
         }
     ]
+    assert "Status reaction queued set" in caplog.text
 
 
 @pytest.mark.asyncio

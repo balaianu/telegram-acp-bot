@@ -51,6 +51,7 @@ class StatusReactionSender:
         reaction = STATUS_REACTION_EMOJI[status]
         try:
             await bot.set_message_reaction(chat_id=chat_id, message_id=message_id, reaction=reaction)
+            logger.info("Status reaction %s set on chat_id=%s message_id=%s", status.value, chat_id, message_id)
         except TelegramError as exc:
             logger.warning(
                 "Status reaction %s failed for chat_id=%s message_id=%s: %s",
