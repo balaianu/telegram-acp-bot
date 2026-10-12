@@ -2,9 +2,11 @@ from __future__ import annotations
 
 # ruff: noqa: F403, F405, I001
 
+import logging
+
 from tests.telegram.support import *
 
-from telegram_acp_bot.telegram.constants import COMPACT_STATUS_HINT_CHARS
+from telegram_acp_bot.telegram.constants import COMPACT_STATUS_HINT_CHARS, COMPACT_STATUS_TICK_SECONDS
 
 SECOND_REPLY_MESSAGE_ID = 2
 
@@ -29,23 +31,24 @@ async def test_compact_on_activity_event_sends_initial_status_message():
 
     assert len(bot.sent_messages) == 1
     status_text = cast(str, bot.sent_messages[0]["text"])
-    assert status_text == "💡 Thinking."
+    assert status_text == "💡 Thinking"
     assert TEST_CHAT_ID in bridge._compact_status_msg_id
 
 
-async def test_compact_on_activity_event_edits_existing_status_message():
+async def test_compact_on_activity_event_defers_follow_up_edits_to_the_refresher():
     bridge = make_compact_bridge()
     bot = DummyBot()
     bridge._app = cast(Application, SimpleNamespace(bot=bot))
     bridge._compact_status_msg_id[TEST_CHAT_ID] = COMPACT_STATUS_MSG_ID
+    bridge._compact_status_displayed[TEST_CHAT_ID] = "💡 Thinking"
     block = AgentActivityBlock(kind="execute", title="Run ls", status="in_progress", text="")
 
     await bridge.on_activity_event(TEST_CHAT_ID, block)
 
-    assert len(bot.sent_messages) == 0
-    assert len(bot.edited_messages) == 1
-    assert bot.edited_messages[0]["message_id"] == COMPACT_STATUS_MSG_ID
-    assert cast(str, bot.edited_messages[0]["text"]) == "⚙️ Running: ls."
+    assert bot.sent_messages == []
+    assert bot.edited_messages == []
+    assert bridge._compact_status_label[TEST_CHAT_ID] == "⚙️ Running: ls"
+    assert TEST_CHAT_ID in bridge._compact_status_tasks
 
 
 async def test_compact_status_hint_names_the_command_of_a_multiline_block():
@@ -88,8 +91,23 @@ async def test_compact_status_hint_keeps_paths_outside_the_workspace_absolute():
     assert TelegramBridge._compact_status_hint(without_workspace, workspace=None) == "/var/log/sys"
 
 
-async def test_compact_status_message_shows_the_hint_and_keeps_it_while_animating(mocker):
-    """The rotating-dots task re-renders the whole line, so the action stays visible."""
+async def _drive_compact_refresher(bridge: TelegramBridge, mocker, *, ticks: int) -> None:
+    """Run the compact refresher for a fixed number of paint passes, then stop its loop."""
+    steps = 0
+
+    async def fake_sleep(seconds: float) -> None:
+        nonlocal steps
+        assert seconds == COMPACT_STATUS_TICK_SECONDS
+        steps += 1
+        if steps > ticks:
+            bridge._compact_status_label.pop(TEST_CHAT_ID, None)
+
+    mocker.patch("telegram_acp_bot.telegram.bridge.asyncio.sleep", side_effect=fake_sleep)
+    await bridge._refresh_compact_status(chat_id=TEST_CHAT_ID)
+
+
+async def test_compact_status_message_shows_the_hint_and_repaints_it(mocker):
+    """The refresher re-renders the whole line, so the action name survives later updates."""
     bridge = make_compact_bridge()
     bot = DummyBot()
     bridge._app = cast(Application, SimpleNamespace(bot=bot))
@@ -98,24 +116,17 @@ async def test_compact_status_message_shows_the_hint_and_keeps_it_while_animatin
     await bridge.on_activity_event(TEST_CHAT_ID, block)
 
     assert bridge._compact_status_label[TEST_CHAT_ID] == "✏️ Editing: src/app.py"
+    assert cast(str, bot.sent_messages[0]["text"]) == "✏️ Editing: src/app.py"
 
-    steps = 0
-    stop_after_steps = 2
-
-    async def fake_sleep(_: float) -> None:
-        nonlocal steps
-        steps += 1
-        if steps >= stop_after_steps:
-            bridge._compact_status_label.pop(TEST_CHAT_ID, None)
-
-    mocker.patch("telegram_acp_bot.telegram.bridge.asyncio.sleep", side_effect=fake_sleep)
-    await bridge._animate_compact_status(chat_id=TEST_CHAT_ID, message_id=1)
+    bridge._compact_status_label[TEST_CHAT_ID] = "✏️ Editing: src/config.py"
+    await _drive_compact_refresher(bridge, mocker, ticks=1)
 
     edited = [cast(str, m["text"]) for m in bot.edited_messages]
-    assert edited[0] == "✏️ Editing: src/app.py.."
+    assert edited == ["✏️ Editing: src/config.py"]
+    assert bridge._compact_status_displayed[TEST_CHAT_ID] == "✏️ Editing: src/config.py"
 
 
-async def test_compact_on_activity_event_send_failure_is_silent():
+async def test_compact_on_activity_event_send_failure_leaves_no_status_message(caplog):
     bridge = make_compact_bridge()
 
     class SendFailBot(DummyBot):
@@ -126,21 +137,45 @@ async def test_compact_on_activity_event_send_failure_is_silent():
     bridge._app = cast(Application, SimpleNamespace(bot=bot))
     block = AgentActivityBlock(kind="think", title="x", status="in_progress", text="")
 
-    await bridge.on_activity_event(TEST_CHAT_ID, block)
+    with caplog.at_level(logging.WARNING):
+        await bridge.on_activity_event(TEST_CHAT_ID, block)
 
     assert TEST_CHAT_ID not in bridge._compact_status_msg_id
+    assert TEST_CHAT_ID not in bridge._compact_status_tasks
+    assert "Compact status send failed" in caplog.text
 
 
-async def test_compact_on_activity_event_edit_failure_is_silent():
+async def test_compact_refresher_edit_failure_keeps_the_status_message(mocker, caplog):
     bridge = make_compact_bridge()
     bot = FailingEditBot()
     bridge._app = cast(Application, SimpleNamespace(bot=bot))
     bridge._compact_status_msg_id[TEST_CHAT_ID] = COMPACT_STATUS_MSG_ID
-    block = AgentActivityBlock(kind="think", title="x", status="in_progress", text="")
+    bridge._compact_status_label[TEST_CHAT_ID] = "💡 Thinking"
 
-    await bridge.on_activity_event(TEST_CHAT_ID, block)
+    with caplog.at_level(logging.WARNING):
+        await _drive_compact_refresher(bridge, mocker, ticks=1)
 
     assert bridge._compact_status_msg_id[TEST_CHAT_ID] == COMPACT_STATUS_MSG_ID
+    assert "Compact status edit failed" in caplog.text
+
+
+async def test_compact_refresher_drops_the_status_message_once_it_is_gone(mocker, caplog):
+    class GoneEditBot(DummyBot):
+        async def edit_message_text(self, **kwargs: object) -> None:
+            raise StatusGoneError
+
+    bridge = make_compact_bridge()
+    bridge._app = cast(Application, SimpleNamespace(bot=GoneEditBot()))
+    bridge._compact_status_msg_id[TEST_CHAT_ID] = COMPACT_STATUS_MSG_ID
+    bridge._compact_status_displayed[TEST_CHAT_ID] = "💡 Thinking"
+    bridge._compact_status_label[TEST_CHAT_ID] = "⚙️ Running: ls"
+
+    with caplog.at_level(logging.WARNING):
+        await _drive_compact_refresher(bridge, mocker, ticks=1)
+
+    assert TEST_CHAT_ID not in bridge._compact_status_msg_id
+    assert TEST_CHAT_ID not in bridge._compact_status_displayed
+    assert "disappeared" in caplog.text
 
 
 async def test_compact_dispatch_reply_edits_status_message():
@@ -284,7 +319,7 @@ async def test_compact_live_activity_full_flow():
     assert len(bot.sent_messages) == 1
     # Status text keeps the normal emoji language in compact mode.
     status_text = cast(str, bot.sent_messages[0]["text"])
-    assert status_text == "💡 Thinking."
+    assert status_text == "💡 Thinking"
     assert len(bot.edited_messages) == 1
     assert "Final response." in cast(str, bot.edited_messages[0]["text"])
 
@@ -741,14 +776,13 @@ async def test_compact_stale_status_cleared_when_reply_is_none():
     assert "Agent output exceeded ACP stdio limit." in update.message.replies[-1]
 
 
-async def test_animate_compact_status_returns_when_app_is_missing():
+async def test_compact_refresher_returns_when_app_is_missing():
     bridge = make_compact_bridge()
-    await bridge._animate_compact_status(chat_id=TEST_CHAT_ID, message_id=1)
+    await bridge._refresh_compact_status(chat_id=TEST_CHAT_ID)
 
 
-async def test_compact_rotating_dots_cycle(mocker):
-    """Background compact animation rotates dots: . → .. → ... → ."""
-    stop_after_steps = 3
+async def test_compact_refresher_applies_at_most_one_edit_per_wait_period(mocker):
+    """A burst of activity events collapses into one edit per tick, which keeps Telegram happy."""
     bridge = make_compact_bridge()
     bot = DummyBot()
     bridge._app = cast(Application, SimpleNamespace(bot=bot))
@@ -756,23 +790,69 @@ async def test_compact_rotating_dots_cycle(mocker):
 
     await bridge.on_activity_event(TEST_CHAT_ID, block)
 
+    labels = ["⚙️ Running: ls", "📖 Reading: a.py", "✏️ Editing: b.py"]
     steps = 0
 
-    async def fake_sleep(_: float) -> None:
+    async def fake_sleep(seconds: float) -> None:
         nonlocal steps
+        assert seconds == COMPACT_STATUS_TICK_SECONDS
         steps += 1
-        if steps >= stop_after_steps:
+        if steps > len(labels):
             bridge._compact_status_label.pop(TEST_CHAT_ID, None)
+            return
+        bridge._compact_status_label[TEST_CHAT_ID] = labels[steps - 1]
 
     mocker.patch("telegram_acp_bot.telegram.bridge.asyncio.sleep", side_effect=fake_sleep)
-    await bridge._animate_compact_status(chat_id=TEST_CHAT_ID, message_id=1)
+    await bridge._refresh_compact_status(chat_id=TEST_CHAT_ID)
 
-    texts = [cast(str, bot.sent_messages[0]["text"])] + [cast(str, m["text"]) for m in bot.edited_messages]
-    assert texts[0].startswith("💡 Thinking")
-    # Dot sequence advances while the animation task is alive.
-    assert texts[0].endswith(".")
-    assert texts[1].endswith("..")
-    assert texts[2].endswith("...")
+    assert [cast(str, m["text"]) for m in bot.edited_messages] == labels
+
+
+async def test_compact_refresher_skips_an_edit_when_the_label_is_unchanged(mocker):
+    bridge = make_compact_bridge()
+    bot = DummyBot()
+    bridge._app = cast(Application, SimpleNamespace(bot=bot))
+    bridge._compact_status_msg_id[TEST_CHAT_ID] = COMPACT_STATUS_MSG_ID
+    bridge._compact_status_displayed[TEST_CHAT_ID] = "💡 Thinking"
+    bridge._compact_status_label[TEST_CHAT_ID] = "💡 Thinking"
+
+    await _drive_compact_refresher(bridge, mocker, ticks=2)
+
+    assert bot.edited_messages == []
+
+
+async def test_compact_refresher_stops_when_the_status_message_is_cleared(mocker):
+    bridge = make_compact_bridge()
+    bot = DummyBot()
+    bridge._app = cast(Application, SimpleNamespace(bot=bot))
+    bridge._compact_status_label[TEST_CHAT_ID] = "💡 Thinking"
+
+    async def clear_message(seconds: float) -> None:
+        assert seconds == COMPACT_STATUS_TICK_SECONDS
+        bridge._compact_status_msg_id.pop(TEST_CHAT_ID, None)
+
+    mocker.patch("telegram_acp_bot.telegram.bridge.asyncio.sleep", side_effect=clear_message)
+    await bridge._refresh_compact_status(chat_id=TEST_CHAT_ID)
+
+    assert bot.edited_messages == []
+
+
+async def test_compact_refresher_task_removes_itself_when_the_prompt_ends(mocker):
+    bridge = make_compact_bridge()
+    bot = DummyBot()
+    bridge._app = cast(Application, SimpleNamespace(bot=bot))
+    bridge._compact_status_label[TEST_CHAT_ID] = "💡 Thinking"
+    bridge._compact_status_msg_id[TEST_CHAT_ID] = COMPACT_STATUS_MSG_ID
+
+    async def end_prompt(seconds: float) -> None:
+        assert seconds == COMPACT_STATUS_TICK_SECONDS
+        bridge._compact_status_label.pop(TEST_CHAT_ID, None)
+
+    mocker.patch("telegram_acp_bot.telegram.bridge.asyncio.sleep", side_effect=end_prompt)
+    bridge._ensure_compact_status_refresher(chat_id=TEST_CHAT_ID)
+    await bridge._compact_status_tasks[TEST_CHAT_ID]
+
+    assert TEST_CHAT_ID not in bridge._compact_status_tasks
 
 
 async def test_compact_concurrent_activity_sends_only_one_message():

@@ -26,7 +26,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -75,6 +75,7 @@ from telegram_acp_bot.telegram.constants import (
     BUSY_SENT_TEXT,
     BUSY_STILL_QUEUED_TEXT,
     COMPACT_STATUS_HINT_CHARS,
+    COMPACT_STATUS_TICK_SECONDS,
     KIND_LABELS,
     MAX_RESTART_ARGS,
     MAX_RESUME_ARGS,
@@ -183,7 +184,9 @@ class TelegramBridge:
         self._compact_status_locks: dict[int, asyncio.Lock] = {}
         # Current compact status label per chat (for example "⚙️ Running").
         self._compact_status_label: dict[int, str] = {}
-        # Background animation task per chat for `. .. ...` progress.
+        # Text actually shown on the status message per chat, so unchanged labels skip the API call.
+        self._compact_status_displayed: dict[int, str] = {}
+        # Background task that paints the current label onto the single status message per chat.
         self._compact_status_tasks: dict[int, asyncio.Task[None]] = {}
         self._suppressed_activity_chats: set[int] = set()
         self._status_reactions = StatusReactionSender(config.status_reactions)
@@ -1020,7 +1023,7 @@ class TelegramBridge:
         """
         app = self._app
         status_msg_id = self._compact_status_msg_id.pop(chat_id, None)
-        self._cancel_compact_animation(chat_id)
+        self._stop_compact_status(chat_id)
         self._compact_status_label.pop(chat_id, None)
         if status_msg_id is not None and app is not None:
             success = await TelegramBridge._edit_markdown_in_chat(
@@ -1037,17 +1040,18 @@ class TelegramBridge:
         """Delete the in-progress compact status message if one exists."""
         app = self._app
         status_msg_id = self._compact_status_msg_id.pop(chat_id, None)
-        self._cancel_compact_animation(chat_id)
+        self._stop_compact_status(chat_id)
         self._compact_status_label.pop(chat_id, None)
         if status_msg_id is None or app is None:
             return
         with suppress(TelegramError):
             await app.bot.delete_message(chat_id=chat_id, message_id=status_msg_id)
 
-    def _cancel_compact_animation(self, chat_id: int) -> None:
+    def _stop_compact_status(self, chat_id: int) -> None:
         task = self._compact_status_tasks.pop(chat_id, None)
         if task is not None:
             task.cancel()
+        self._compact_status_displayed.pop(chat_id, None)
 
     async def _set_activity_mode(self, *, chat_id: int, mode: ActivityMode) -> None:
         await self._clear_activity_mode_state(chat_id=chat_id)
@@ -1063,33 +1067,56 @@ class TelegramBridge:
     def _activity_handler(self, *, chat_id: int) -> _ActivityModeHandler:
         return self._activity_handlers[self._activity_mode(chat_id=chat_id)]
 
-    def _ensure_compact_animation(self, *, chat_id: int, message_id: int) -> None:
+    def _ensure_compact_status_refresher(self, *, chat_id: int) -> None:
         task = self._compact_status_tasks.get(chat_id)
         if task is not None and not task.done():
             return
-        self._compact_status_tasks[chat_id] = asyncio.create_task(
-            self._animate_compact_status(chat_id=chat_id, message_id=message_id)
-        )
+        self._compact_status_tasks[chat_id] = asyncio.create_task(self._refresh_compact_status(chat_id=chat_id))
 
-    async def _animate_compact_status(self, *, chat_id: int, message_id: int) -> None:
-        """Rotate `. .. ...` on the active compact status message until cancelled."""
+    async def _refresh_compact_status(self, *, chat_id: int) -> None:
+        """Repaint the compact status message on a Telegram-safe cadence.
+
+        Activity events can arrive several times per second, while Telegram allows only about 20
+        messages a minute in a group, so each wait period applies at most one edit and a label
+        that has not changed is skipped entirely.
+        """
         app = self._app
         if app is None:
             return
-        dot_count = 1
-        while True:
-            await asyncio.sleep(0.6)
-            base_text = self._compact_status_label.get(chat_id)
-            current_msg_id = self._compact_status_msg_id.get(chat_id)
-            if base_text is None or current_msg_id != message_id:
-                return
-            dot_count = dot_count % 3 + 1
-            with suppress(TelegramError):
-                await app.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=f"{base_text}{'.' * dot_count}",
-                )
+        try:
+            while True:
+                await asyncio.sleep(COMPACT_STATUS_TICK_SECONDS)
+                base_text = self._compact_status_label.get(chat_id)
+                message_id = self._compact_status_msg_id.get(chat_id)
+                if base_text is None or message_id is None:
+                    return
+                if base_text == self._compact_status_displayed.get(chat_id):
+                    continue
+                try:
+                    await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=base_text)
+                except BadRequest as exc:
+                    logger.warning("Compact status message on chat_id=%s disappeared: %s", chat_id, exc)
+                    self._compact_status_msg_id.pop(chat_id, None)
+                    self._compact_status_displayed.pop(chat_id, None)
+                    return
+                except TelegramError as exc:
+                    logger.warning(
+                        "Compact status edit failed on chat_id=%s message_id=%s: %s",
+                        chat_id,
+                        message_id,
+                        exc,
+                    )
+                else:
+                    self._compact_status_displayed[chat_id] = base_text
+                    logger.info(
+                        "Compact status updated in place on chat_id=%s message_id=%s text=%r",
+                        chat_id,
+                        message_id,
+                        base_text,
+                    )
+        finally:
+            if self._compact_status_tasks.get(chat_id) is asyncio.current_task():
+                self._compact_status_tasks.pop(chat_id, None)
 
     async def _start_implicit_session(self, *, update: Update, chat_id: int) -> bool:
         workspace = self._config.default_workspace

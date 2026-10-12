@@ -56,3 +56,4 @@ REPLY_LABEL = "✍️ Replying"
 ACTIVITY_MODE_CHOICES: tuple[str, ...] = ("normal", "compact", "verbose")
 ACTIVITY_MODE_HELP = "normal, compact, or verbose"
 COMPACT_STATUS_HINT_CHARS = 60
+COMPACT_STATUS_TICK_SECONDS = 4.0

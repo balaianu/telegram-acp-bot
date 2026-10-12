@@ -8,6 +8,7 @@ for a given chat is selected by `TelegramBridge` at runtime.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from telegram_acp_bot.telegram.bridge import TelegramBridge
 
 VERBOSE_STREAM_TICK_SECONDS = 0.12
+
+logger = logging.getLogger(__name__)
 
 
 class _ActivityModeHandler:
@@ -103,7 +106,7 @@ class _CompactActivityModeHandler(_ActivityModeHandler):
         lock = self._bridge._compact_status_locks.setdefault(request.chat_id, asyncio.Lock())
         async with lock:
             status_msg_id = self._bridge._compact_status_msg_id.get(request.chat_id)
-            self._bridge._cancel_compact_animation(request.chat_id)
+            self._bridge._stop_compact_status(request.chat_id)
             if status_msg_id is not None:
                 edited = await self._bridge._edit_markdown_in_chat(
                     bot=app.bot,
@@ -136,18 +139,23 @@ class _CompactActivityModeHandler(_ActivityModeHandler):
         lock = self._bridge._compact_status_locks.setdefault(chat_id, asyncio.Lock())
         async with lock:
             self._bridge._compact_status_label[chat_id] = base_text
-            status_text = f"{base_text}."
-            existing_msg_id = self._bridge._compact_status_msg_id.get(chat_id)
-            if existing_msg_id is None:
-                with suppress(TelegramError):
-                    msg = await app.bot.send_message(chat_id=chat_id, text=status_text)
-                    existing_msg_id = msg.message_id
-                    self._bridge._compact_status_msg_id[chat_id] = existing_msg_id
-            else:
-                with suppress(TelegramError):
-                    await app.bot.edit_message_text(chat_id=chat_id, message_id=existing_msg_id, text=status_text)
-            if existing_msg_id is not None:
-                self._bridge._ensure_compact_animation(chat_id=chat_id, message_id=existing_msg_id)
+            if self._bridge._compact_status_msg_id.get(chat_id) is not None:
+                self._bridge._ensure_compact_status_refresher(chat_id=chat_id)
+                return
+            try:
+                sent = await app.bot.send_message(chat_id=chat_id, text=base_text)
+            except TelegramError as exc:
+                logger.warning("Compact status send failed on chat_id=%s: %s", chat_id, exc)
+                return
+            self._bridge._compact_status_msg_id[chat_id] = sent.message_id
+            self._bridge._compact_status_displayed[chat_id] = base_text
+            logger.info(
+                "Compact status message created on chat_id=%s message_id=%s text=%r",
+                chat_id,
+                sent.message_id,
+                base_text,
+            )
+            self._bridge._ensure_compact_status_refresher(chat_id=chat_id)
 
     async def finalize_reply(self, *, chat_id: int, update: Update, text: str) -> int | None:
         if self._bridge._app is None or chat_id not in self._bridge._compact_status_msg_id:

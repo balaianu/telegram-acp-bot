@@ -82,7 +82,9 @@ The bot entrypoint is `telegram-acp-bot`.
   updates that message in place, and keeps the normal activity emoji in the
   message text while work is in progress. The status line also names the action
   in progress (the command being run, or the file being touched relative to the
-  workspace), on one row.
+  workspace), on one row. Follow-up updates are applied at most once every few
+  seconds, so a burst of tool activity stays inside Telegram's per-chat message
+  limit.
   In `verbose`, the bot streams append-only updates in place for active reply
   text and tool activity, then finalizes the same message when possible.
 

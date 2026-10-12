@@ -140,8 +140,9 @@ ACP_ACTIVITY_MODE
   Allowed values: `normal`, `compact`, `verbose`.
   `normal` (default) emits each visible activity event as its own message.
   `compact` collapses all events into a single in-place status message that
-  names the action in progress (command, or file relative to the workspace) and
-  is replaced by the final answer when the agent responds.
+  names the action in progress (command, or file relative to the workspace),
+  repaints it at most once every few seconds to stay inside Telegram's per-chat
+  message limit, and is replaced by the final answer when the agent responds.
   `verbose` streams append-only updates in place for active reply text and
   tool activity, and then finalizes those messages when the prompt completes.
 

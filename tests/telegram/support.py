@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 from telegram import Bot, CallbackQuery, InlineKeyboardMarkup, MessageEntity, Update
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import AIORateLimiter, Application
 
 from telegram_acp_bot.acp.echo_service import EchoAgentService
@@ -63,6 +63,13 @@ class MarkdownFailureError(TelegramError):
 
     def __init__(self) -> None:
         super().__init__("bad markdown")
+
+
+class StatusGoneError(BadRequest):
+    """Raised by test doubles when the message to edit no longer exists."""
+
+    def __init__(self) -> None:
+        super().__init__("message not found")
 
 
 class DummyLoadFailedError(RuntimeError):
@@ -655,6 +662,7 @@ __all__ = [
     "Sequence",
     "SessionRegistry",
     "SimpleNamespace",
+    "StatusGoneError",
     "TelegramBridge",
     "TelegramError",
     "Update",
