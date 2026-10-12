@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -202,6 +203,8 @@ class _AgentCommandMessage(filters.MessageFilter):
 
 _AGENT_COMMAND = _AgentCommandMessage()
 
+_BotCommandHandler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
+
 
 class TelegramBridge:
     """Telegram command and message handlers for the MVP bot."""
@@ -217,6 +220,7 @@ class TelegramBridge:
         self._agent_service = agent_service
         self._scheduled_task_store = scheduled_task_store
         self._app: Application | None = None
+        self._bot_commands: dict[str, _BotCommandHandler] = {}
         self._restart_requested = False
         self._activity_mode_by_chat: dict[int, ActivityMode] = {}
         self._implicit_start_locks_by_chat: dict[int, asyncio.Lock] = {}
@@ -247,19 +251,23 @@ class TelegramBridge:
 
     def install(self, app: Application) -> None:
         self._app = app
-        app.add_handler(CommandHandler("start", self.start))
-        app.add_handler(CommandHandler("help", self.help))
-        app.add_handler(CommandHandler("new", self.new_session))
-        app.add_handler(CommandHandler("resume", self.resume_session))
-        app.add_handler(CommandHandler("schedule", self.schedule_prompt))
-        app.add_handler(CommandHandler("scheduled", self.scheduled))
-        app.add_handler(CommandHandler("mode", self.mode))
-        app.add_handler(CommandHandler("session", self.session))
-        app.add_handler(CommandHandler("cancel", self.cancel))
-        app.add_handler(CommandHandler("stop", self.stop))
-        app.add_handler(CommandHandler("clear", self.clear))
-        app.add_handler(CommandHandler("restart", self.restart))
-        app.add_handler(CommandHandler("cmds", self.cmds))
+        for name, callback in (
+            ("start", self.start),
+            ("help", self.help),
+            ("new", self.new_session),
+            ("resume", self.resume_session),
+            ("schedule", self.schedule_prompt),
+            ("scheduled", self.scheduled),
+            ("mode", self.mode),
+            ("session", self.session),
+            ("cancel", self.cancel),
+            ("stop", self.stop),
+            ("clear", self.clear),
+            ("restart", self.restart),
+            ("cmds", self.cmds),
+        ):
+            self._bot_commands[name] = callback
+            app.add_handler(CommandHandler(name, callback))
         app.add_handler(CallbackQueryHandler(self.on_permission_callback, pattern=r"^perm\|"))
         app.add_handler(CallbackQueryHandler(self.on_resume_callback, pattern=r"^resume\|"))
         app.add_handler(CallbackQueryHandler(self.on_scheduled_callback, pattern=r"^scheduled\|"))
@@ -984,6 +992,13 @@ class TelegramBridge:
         if match is None:
             return
         name = match.group(1).lower()
+
+        bot_command = self._bot_commands.get(name)
+        if bot_command is not None:
+            # Telegram only builds a `bot_command` entity for message text, so a bot command written
+            # in a media caption never reaches its CommandHandler; dispatch it here instead of losing it.
+            await bot_command(update, context)
+            return
 
         chat_id = self._chat_id(update)
         commands = self._advertised_commands(chat_id=chat_id)

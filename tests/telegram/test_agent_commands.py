@@ -244,3 +244,16 @@ async def test_mentioned_group_command_photo_is_forwarded_and_not_queued():
 
     assert [text for text, _ in service.prompts] == ["/goal review"]
     assert service.pending_media == []
+
+
+async def test_bot_command_written_in_a_caption_runs_the_bot_handler():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".")
+    bridge.install(build_application(config, bridge))
+    update = make_update(caption="/cmds", photo=[SimpleNamespace(file_id="photo-1")])
+
+    await bridge.on_agent_command(update, make_context())
+
+    assert update.message is not None
+    assert "/goal: Set or manage a persistent goal" in update.message.replies[0]
+    assert service.prompts == []

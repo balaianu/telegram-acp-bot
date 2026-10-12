@@ -271,7 +271,8 @@ Three limits to know about:
 - The list is empty until the agent advertises its commands, which normally happens when the session is created. Send
   a message or use `/new` first, then ask again.
 - The bot's own commands always win. `/help`, `/mode` and the rest belong to the bot even if the agent advertises a
-  command with the same name.
+  command with the same name. Telegram only recognises a command in message text, so a bot command written in a media
+  caption is dispatched by this gate and still runs the bot's handler without its arguments.
 - The agent's commands never join Telegram's native `/` menu, which only mirrors the bot's own command list. Type them
   or copy them from `/cmds`. That menu comes from `register-commands`, so after an upgrade that adds a bot command,
   run `telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN"` again or the new entry stays hidden.
