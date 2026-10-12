@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import runpy
 import sys
 from importlib import metadata
@@ -252,6 +253,32 @@ def test_main_passes_default_internal_mcp_server_to_service(mocker):
     env = {item.name: item.value for item in server.env}
     assert env[TOKEN_ENV] == "TOKEN"
     assert STATE_FILE_ENV in env
+
+
+def test_main_forwards_configured_state_file(mocker, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """An explicit state path reaches both the agent service and the injected MCP server."""
+    configured = tmp_path / "channel-state.json"
+    monkeypatch.setenv(STATE_FILE_ENV, str(configured))
+    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
+    assert mock_service.call_args is not None
+    assert mock_service.call_args.kwargs["channel_state_file"] == configured
+    server = mock_service.call_args.kwargs["mcp_servers"][0]
+    assert {item.name: item.value for item in server.env}[STATE_FILE_ENV] == str(configured)
+
+
+def test_main_defaults_state_file_to_the_current_pid(mocker, monkeypatch: pytest.MonkeyPatch):
+    """Without an override the state file stays private to this process."""
+    monkeypatch.delenv(STATE_FILE_ENV, raising=False)
+    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
+    assert mock_service.call_args is not None
+    state_file = mock_service.call_args.kwargs["channel_state_file"]
+    assert state_file.name == f"telegram-acp-bot-mcp-state-{os.getpid()}.json"
 
 
 def test_show_help(capsys: pytest.CaptureFixture):

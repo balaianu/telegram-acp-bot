@@ -152,8 +152,10 @@ ACP_TELEGRAM_CHANNEL_ALLOW_PATH
   Disabled by default. Set to `1` (or `true`/`yes`/`on`) only when file-path inputs are trusted.
 
 ACP_TELEGRAM_CHANNEL_STATE_FILE
-  Path to the MCP channel shared state file (`session_id -> chat_id`, plus last active session).
-  Usually injected by the bot runtime for the internal MCP server.
+  Path to the MCP channel shared state file (`session_id -> chat_id`, pending media, last active session).
+  When unset, the bot uses a file named after its own process id in the system temp directory, so the
+  state disappears with that process. Set it to a stable path to carry routing state and queued media
+  references across restarts. The bot injects the resolved path into the internal MCP server either way.
 
 ACP_TELEGRAM_BOT_TOKEN
   Telegram bot token used by the internal MCP server when sending attachments.
@@ -255,6 +257,8 @@ For adding external MCP servers, see {doc}`mcp`.
 - {term}`ACP_TELEGRAM_CHANNEL_ALLOW_PATH` controls whether MCP attachment delivery accepts `path` input.
   Default behavior is disabled, so agents must use `data_base64`.
 - {term}`ACP_TELEGRAM_CHANNEL_STATE_FILE` points to runtime state used to resolve session routing for MCP calls.
+  Leaving it unset gives each bot process a private file in the temp directory; setting it pins one shared path
+  that survives restarts.
 - {term}`ACP_TELEGRAM_BOT_TOKEN` is the token consumed by the MCP server when calling Telegram Bot API.
 
 Security notes:

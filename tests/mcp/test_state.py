@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import stat
 from pathlib import Path
+from tempfile import gettempdir
 
 import pytest
 
 from tests.mcp.support import (
     MAX_PENDING_MEDIA_PER_CHAT,
+    STATE_FILE_ENV,
     STATE_FILE_PRIVATE_MODE,
     TEST_MEDIA_CHAT_ID,
     TEST_MEDIA_FILE_ID,
@@ -17,10 +19,12 @@ from tests.mcp.support import (
     TEST_QUEUED_AT,
     append_pending_media,
     channel_state_module,
+    default_state_file,
     load_last_session_id,
     load_pending_media,
     load_prompt_message_id,
     mcp_channel,
+    resolve_state_file,
     save_last_session_id,
     save_prompt_message_id,
     save_session_chat_map,
@@ -28,6 +32,7 @@ from tests.mcp.support import (
 )
 
 PROMPT_MESSAGE_ID = 42
+TEST_PID = 4242
 
 
 def queue_media(path: Path, *, chat_id: int = TEST_MEDIA_CHAT_ID, file_id: str = TEST_MEDIA_FILE_ID) -> None:
@@ -265,3 +270,43 @@ def test_state_savers_preserve_queued_media(tmp_path: Path, saver):
     saver(state_file)
 
     assert list(load_pending_media(state_file)) == [str(TEST_MEDIA_CHAT_ID)]
+
+
+def test_resolve_state_file_uses_the_configured_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    configured = tmp_path / "channel-state.json"
+    monkeypatch.setenv(STATE_FILE_ENV, str(configured))
+
+    assert resolve_state_file(pid=TEST_PID) == configured
+
+
+def test_resolve_state_file_expands_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(STATE_FILE_ENV, "  ~/.acp/channel-state.json ")
+
+    assert resolve_state_file(pid=TEST_PID) == home / ".acp" / "channel-state.json"
+
+
+@pytest.mark.parametrize("configured", ["", "   "], ids=["empty", "whitespace"])
+def test_resolve_state_file_falls_back_when_the_env_is_blank(monkeypatch: pytest.MonkeyPatch, configured: str):
+    monkeypatch.setenv(STATE_FILE_ENV, configured)
+
+    assert resolve_state_file(pid=TEST_PID) == default_state_file(pid=TEST_PID)
+
+
+def test_resolve_state_file_without_env_is_scoped_to_the_pid(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv(STATE_FILE_ENV, raising=False)
+
+    assert resolve_state_file(pid=TEST_PID) == Path(gettempdir()) / f"telegram-acp-bot-mcp-state-{TEST_PID}.json"
+
+
+def test_configured_state_file_keeps_queued_media_for_a_new_process(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A pinned path is reused by the next process, so queued references outlive a restart."""
+    configured = tmp_path / "channel-state.json"
+    monkeypatch.setenv(STATE_FILE_ENV, str(configured))
+    queue_media(configured)
+
+    reopened = resolve_state_file(pid=TEST_PID + 1)
+
+    assert reopened == configured
+    assert list(load_pending_media(reopened)) == [str(TEST_MEDIA_CHAT_ID)]

@@ -19,6 +19,20 @@ def default_state_file(*, pid: int) -> Path:
     return Path(gettempdir()) / f"telegram-acp-bot-mcp-state-{pid}.json"
 
 
+def resolve_state_file(*, pid: int) -> Path:
+    """Return the state file for this process, honouring an explicit override.
+
+    `ACP_TELEGRAM_CHANNEL_STATE_FILE` lets an operator pin the path so routing state
+    and queued media survive a restart. Without it the file is scoped to the pid, which
+    keeps concurrent runs isolated but discards everything it holds when the process exits.
+    """
+
+    configured = os.getenv(STATE_FILE_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return default_state_file(pid=pid)
+
+
 def load_session_chat_map(path: Path) -> dict[str, int]:
     """Load `session_id -> chat_id` mapping from disk."""
 

@@ -23,7 +23,7 @@ from telegram_acp_bot.acp.service import AcpAgentService
 from telegram_acp_bot.config_file import ConfigFileError, load_config_file
 from telegram_acp_bot.core.session_registry import SessionRegistry
 from telegram_acp_bot.logging_context import configure_logging
-from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV, default_state_file
+from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV, resolve_state_file
 from telegram_acp_bot.register_commands import add_register_commands_subparser
 from telegram_acp_bot.scheduled_tasks import (
     ACP_SCHEDULED_TASKS_DB_ENV,
@@ -483,7 +483,7 @@ def main(args: list[str] | None = None) -> int:
     if not command_parts:
         parser.error("--agent-command is empty after parsing")
     restart_command_parts = shlex.split(opts.restart_command) if opts.restart_command.strip() else None
-    channel_state_file = default_state_file(pid=os.getpid())
+    channel_state_file = resolve_state_file(pid=os.getpid())
     scheduled_tasks_db = Path(opts.scheduled_tasks_db).expanduser()
     mcp_servers = _default_mcp_servers(
         telegram_token=opts.telegram_token,
