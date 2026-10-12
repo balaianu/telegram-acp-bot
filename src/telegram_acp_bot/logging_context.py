@@ -56,7 +56,7 @@ def configure_logging(
                 existing_handler.close()
     root_logger.setLevel(level)
     root_logger.addHandler(handler)
-    _configure_third_party_logging()
+    quiet_transport_logging()
 
 
 @contextmanager
@@ -111,8 +111,13 @@ def _contextual_log_record_factory(*args: object, **kwargs: object) -> logging.L
     return record
 
 
-def _configure_third_party_logging() -> None:
-    """Reduce noisy transport/framework logs in default bot output."""
+def quiet_transport_logging() -> None:
+    """Reduce noisy transport/framework logs in default bot output.
+
+    `httpx` logs every request URL at INFO, and the Telegram Bot API puts the bot
+    token in that URL, so any process that only reaches for a handler leaves a
+    credential in whoever captured the console.
+    """
 
     for logger_name in ("httpx", "httpcore", "telegram.ext", "apscheduler"):
         logging.getLogger(logger_name).setLevel(logging.WARNING)

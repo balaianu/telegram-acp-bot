@@ -169,3 +169,7 @@ telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN" --dele
   `telegram_acp_bot.telegram.bot.BOT_COMMANDS`.  Running `register-commands` is idempotent —
   it is safe to call multiple times.
 - Exit code `0` on success; `1` on Telegram API error.
+- Transport logs stay quiet on this path. The request URL that `httpx` prints at INFO is the bot
+  token, and this sub-command never reaches the bot's own logging setup, so it lowers `httpx`,
+  `httpcore`, `telegram.ext` and `apscheduler` to `WARNING` before calling the API. Only the
+  confirmation line is printed.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 
 import pytest
 from telegram import (
@@ -138,6 +139,18 @@ def test_register_success(mocker, capsys: pytest.CaptureFixture):
     out = capsys.readouterr().out
     assert str(len(BOT_COMMANDS)) in out
     assert "Registered" in out
+
+
+def test_the_api_path_silences_transport_logs_that_carry_the_token(monkeypatch: pytest.MonkeyPatch, mocker):
+    """httpx logs the whole request URL at INFO, and that URL is the bot token."""
+    for name in ("httpx", "httpcore", "telegram.ext", "apscheduler"):
+        monkeypatch.setattr(logging.getLogger(name), "level", logging.NOTSET)
+    mocker.patch("telegram_acp_bot.register_commands._call_api", new=mocker.AsyncMock())
+
+    assert register_commands_main(["--telegram-token", "TOKEN"]) == 0
+
+    for name in ("httpx", "httpcore", "telegram.ext", "apscheduler"):
+        assert logging.getLogger(name).level == logging.WARNING
 
 
 def test_delete_success(mocker, capsys: pytest.CaptureFixture):

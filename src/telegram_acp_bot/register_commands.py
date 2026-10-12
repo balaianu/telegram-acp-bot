@@ -21,6 +21,7 @@ from telegram import (
 )
 from telegram.error import TelegramError
 
+from telegram_acp_bot.logging_context import quiet_transport_logging
 from telegram_acp_bot.telegram.bot import BOT_COMMANDS
 
 _SCOPE_CLASSES = {
@@ -141,6 +142,10 @@ def _execute_register_commands(opts: argparse.Namespace) -> int:
             for cmd, desc in BOT_COMMANDS:
                 print(f"  /{cmd} - {desc}")
         return 0
+
+    # This sub-command never reaches main()'s logging setup, so transport logs are
+    # still at their defaults: httpx would print the request URL, token included.
+    quiet_transport_logging()
 
     try:
         asyncio.run(
