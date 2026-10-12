@@ -242,29 +242,37 @@ Session resumed: <session_id> in <workspace>
 
 ## 11. Run the agent's own slash commands
 
-Some agents publish their own slash commands over ACP. List them from Telegram:
+Some agents publish their own slash commands over ACP. Ask for them from Telegram:
 
 ```text
 /cmds
 ```
+
+The answer is a keyboard with one button per advertised command, three to a row, plus a last button that prints the
+same commands as text with their description and input hint:
 
 ```text
 /goal: Set or manage a persistent goal — <objective> [--turns <number>] | status | clear
 /deep-research: Fan out web research and return a cited report
 ```
 
-Any command in that list is forwarded to the agent verbatim, leading slash included, so it runs inside the active
-session like a normal prompt:
+Tapping a button runs that command in the active session with no arguments. Commands that need input still work,
+because the agent answers with its own usage text; type the command with its arguments once you know them, which is
+matched in message text and in photo or document captions:
 
 ```text
 /goal status
 ```
 
-Commands are matched in message text and in photo or document captions, and they follow the same rules as any other
-message: the allowlist, the group @mention gate, and the busy queue still apply. An unmentioned group `/command` is
-ignored in silence, so the bot does not answer with the unknown-command hint either. When Telegram adds the bot's own
-`@username` to a command picked from the menu, the bot strips that mention before forwarding, so the agent receives
-`/goal status`.
+Typing and tapping share the rest of the rules: the allowlist, the group @mention gate, and the busy queue all still
+apply. An unmentioned group `/command` is ignored in silence, so the bot does not answer with the unknown-command hint
+either. Tapping a button counts as addressing the bot, so a tap runs in a group without an @mention. When Telegram adds
+the bot's own `@username` to a command picked from the native menu, the bot strips that mention before forwarding, so
+the agent receives `/goal status`.
+
+The keyboard is bounded: `AGENT_COMMAND_KEYBOARD_MAX_ROWS` rows of `AGENT_COMMAND_KEYBOARD_COLUMNS` buttons are shown
+and the remaining commands stay available through the listing button and by typing. A command whose name is not built
+from `a-z`, `0-9`, `_` or `-` gets no button, because its name cannot travel as button data.
 
 Three limits to know about:
 
@@ -278,7 +286,8 @@ Three limits to know about:
   run `telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN"` again or the new entry stays hidden.
 
 A command the agent did not advertise is rejected instead of forwarded, so a typo never reaches the agent as prompt
-text. Commands that need an interactive terminal answer that themselves, for example
+text, and a button left over from an older keyboard reports that the command is no longer advertised rather than running
+it. Commands that need an interactive terminal answer that themselves, for example
 `Command /help requires interactive UI and is not available in ACP.`
 
 ## Notes
@@ -288,7 +297,8 @@ text. Commands that need an interactive terminal answer that themselves, for exa
 - `/new` replaces the active session for that chat and is intended for explicitly switching to another workspace/session.
 - `/resume` is ACP-native (`session/list` + `session/load`) and depends on agent capabilities.
 - `/mode` is stored per Telegram chat, so different chats can use different activity modes.
-- `/cmds` lists the slash commands the agent advertised for the current session; see the how-to section above.
+- `/cmds` shows the slash commands the agent advertised for the current session as tap-to-run buttons; see the how-to
+  section above.
 
 ## Logging and traceability
 

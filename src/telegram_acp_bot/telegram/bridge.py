@@ -71,7 +71,13 @@ from telegram_acp_bot.telegram.config import BotConfig
 from telegram_acp_bot.telegram.constants import (
     ACTIVITY_MODE_CHOICES,
     ACTIVITY_MODE_HELP,
+    AGENT_COMMAND_CALLBACK_PARTS,
+    AGENT_COMMAND_CALLBACK_PREFIX,
     AGENT_COMMAND_DESCRIPTION_CHARS,
+    AGENT_COMMAND_KEYBOARD_COLUMNS,
+    AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA,
+    AGENT_COMMAND_KEYBOARD_INFO_LABEL,
+    AGENT_COMMAND_KEYBOARD_MAX_ROWS,
     BUSY_CALLBACK_PARTS,
     BUSY_CALLBACK_PREFIX,
     BUSY_QUEUED_TEXT,
@@ -116,6 +122,7 @@ SCHEDULE_COMMAND_MIN_ARGS = 2
 _SCHEDULE_DELAY_RE = re.compile(r"^(\d+)(s|m|h|d)$", re.IGNORECASE)
 GROUP_CHAT_TYPES = frozenset({"group", "supergroup"})
 _AGENT_COMMAND_TOKEN_RE = re.compile(r"^/([A-Za-z0-9_-]{1,32})(?:@([A-Za-z0-9_]{1,32}))?(?:\s|$)")
+_AGENT_COMMAND_BUTTON_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 
 def _text_mentions_handle(text: str | None, entities: tuple[MessageEntity, ...] | None, handle: str) -> bool:
@@ -165,6 +172,18 @@ def _with_pending_media(text: str, refs: tuple[dict[str, object], ...]) -> str:
 def _command_name(name: str) -> str:
     """Normalize a command name for comparison, whichever casing the agent published."""
     return name.removeprefix("/").lower()
+
+
+def _command_button(command: AgentCommand) -> InlineKeyboardButton | None:
+    """Tap-to-run button for one advertised command, or None when its name cannot travel as callback data.
+
+    Callback data is capped at 64 bytes and the gate only recognises `[A-Za-z0-9_-]{1,32}` names, so a
+    name outside that shape would produce a button whose tap the prompt path could never honour.
+    """
+    name = _command_name(command.name)
+    if _AGENT_COMMAND_BUTTON_NAME_RE.fullmatch(name) is None:
+        return None
+    return InlineKeyboardButton(text=f"/{name}", callback_data=f"{AGENT_COMMAND_CALLBACK_PREFIX}|{name}")
 
 
 def _bot_handle(context: object) -> str:
@@ -272,6 +291,7 @@ class TelegramBridge:
         app.add_handler(CallbackQueryHandler(self.on_resume_callback, pattern=r"^resume\|"))
         app.add_handler(CallbackQueryHandler(self.on_scheduled_callback, pattern=r"^scheduled\|"))
         app.add_handler(CallbackQueryHandler(self.on_busy_callback, pattern=r"^busy\|"))
+        app.add_handler(CallbackQueryHandler(self.on_agent_command_callback, pattern=r"^cmd\|"))
         app.add_handler(MessageHandler(_AGENT_COMMAND, self.on_agent_command))
         app.add_handler(
             MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~_AGENT_COMMAND, self.on_message)
@@ -308,7 +328,13 @@ class TelegramBridge:
                 "This agent has not advertised any slash commands yet. Send a message first, or use /new.",
             )
             return
-        await self._reply(update, self._commands_listing(commands))
+        message = update.message
+        if message is None:
+            return
+        await message.reply_text(
+            f"{len(commands)} agent commands. Tap one to run it, or type it with arguments.",
+            reply_markup=self._commands_keyboard(commands=commands),
+        )
 
     def _advertised_commands(self, *, chat_id: int) -> tuple[AgentCommand, ...]:
         """Slash commands the agent published for this chat; empty when the service or session has none."""
@@ -316,6 +342,25 @@ class TelegramBridge:
         if not callable(provider):
             return ()
         return provider(chat_id=chat_id) or ()
+
+    @staticmethod
+    def _commands_keyboard(*, commands: tuple[AgentCommand, ...]) -> InlineKeyboardMarkup:
+        """Grid of tap-to-run buttons, with the plain description listing kept one tap away."""
+        buttons = [button for button in map(_command_button, commands) if button is not None]
+        visible = buttons[: AGENT_COMMAND_KEYBOARD_MAX_ROWS * AGENT_COMMAND_KEYBOARD_COLUMNS]
+        rows = [
+            list(visible[start : start + AGENT_COMMAND_KEYBOARD_COLUMNS])
+            for start in range(0, len(visible), AGENT_COMMAND_KEYBOARD_COLUMNS)
+        ]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=AGENT_COMMAND_KEYBOARD_INFO_LABEL,
+                    callback_data=AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA,
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
 
     @staticmethod
     def _commands_listing(commands: tuple[AgentCommand, ...]) -> str:
@@ -1010,6 +1055,47 @@ class TelegramBridge:
         logger.info("Forwarding agent command on chat_id=%s text=%s", chat_id, log_text_preview(forwarded))
         await self.on_message(update, context, prompt_text=forwarded)
 
+    async def on_agent_command_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run the agent slash command behind a tapped `/cmds` button, or show the descriptions."""
+        query = update.callback_query
+        if query is None:
+            return
+        if not await self._require_access(update):
+            await query.answer("Access denied.")
+            return
+        chat_id = self._chat_id_from_update_or_query(update=update, query=query)
+        if chat_id is None:
+            await query.answer("Missing chat.")
+            return
+
+        commands = self._advertised_commands(chat_id=chat_id)
+        data = query.data or ""
+        if data == AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA:
+            await self._answer_commands_listing(update=update, query=query, commands=commands)
+            return
+        parts = data.split("|", maxsplit=1)
+        if len(parts) != AGENT_COMMAND_CALLBACK_PARTS or parts[0] != AGENT_COMMAND_CALLBACK_PREFIX:
+            await query.answer("Invalid action.")
+            return
+        name = parts[1]
+        if not any(_command_name(command.name) == name for command in commands):
+            # A keyboard printed before /new or /stop can outlive the session it came from.
+            await query.answer("This agent no longer advertises that command. Check /cmds.")
+            return
+        await query.answer(f"Running /{name}.")
+        logger.info("Forwarding tapped agent command on chat_id=%s text=/%s", chat_id, name)
+        await self.on_message(update, context, prompt_text=f"/{name}")
+
+    async def _answer_commands_listing(
+        self, *, update: Update, query: CallbackQuery, commands: tuple[AgentCommand, ...]
+    ) -> None:
+        """Send the plain description listing that the keyboard's info button asks for."""
+        if not commands:
+            await query.answer("No commands advertised any more.")
+            return
+        await query.answer("Showing descriptions.")
+        await self._reply(update, self._commands_listing(commands))
+
     async def on_message(
         self,
         update: Update,
@@ -1056,7 +1142,7 @@ class TelegramBridge:
         """
         if self._app is None:
             return
-        message_id = getattr(update.message, "message_id", None)
+        message_id = getattr(self._anchor_message(update), "message_id", None)
         if message_id is None:
             return
         await self._status_reactions.set(bot=self._app.bot, chat_id=chat_id, message_id=message_id, status=status)
@@ -1257,7 +1343,7 @@ class TelegramBridge:
         context: ContextTypes.DEFAULT_TYPE,
         text_override: str | None = None,
     ) -> _PromptInput | None:
-        message = update.message
+        message = self._anchor_message(update)
         if message is None:
             return None
         chat_id = self._chat_id(update)
@@ -1377,7 +1463,7 @@ class TelegramBridge:
                     "text": BUSY_QUEUED_TEXT,
                     "reply_markup": keyboard,
                 }
-                queued_message = update.message
+                queued_message = self._anchor_message(update)
                 if queued_message is not None and isinstance(queued_message.message_id, int):
                     send_kwargs["reply_to_message_id"] = queued_message.message_id
                     send_kwargs["allow_sending_without_reply"] = True
@@ -1475,7 +1561,7 @@ class TelegramBridge:
             session_id=session_id,
         ):
             await context.bot.send_chat_action(chat_id=prompt_input.chat_id, action=ChatAction.TYPING)
-        source_message_id = getattr(update.message, "message_id", None)
+        source_message_id = getattr(self._anchor_message(update), "message_id", None)
         try:
             await self._set_prompt_message_context(
                 session_id=session_id,
@@ -1695,6 +1781,9 @@ class TelegramBridge:
         Any handler that may answer a plain message has to consult this before saying anything, so an
         unaddressed group post never draws the bot into the conversation.
         """
+        # Tapping one of the bot's own buttons is an explicit address, so the mention rule never hides it.
+        if getattr(update, "callback_query", None) is not None:
+            return False
         if not self._config.group_require_mention or not self._ignores_unmentioned_group_message(update, context):
             return False
         if self._config.group_media_queue:
@@ -1727,6 +1816,17 @@ class TelegramBridge:
         if chat is None:
             raise ChatRequiredError
         return chat.id
+
+    @staticmethod
+    def _anchor_message(update: Update) -> Message | None:
+        """Message a turn is anchored to: the inbound one, or the tapped one behind an inline button.
+
+        Reply delivery, status reactions and media extraction all hang off this message, so a prompt
+        that arrives as a callback query keeps working instead of vanishing on a missing `update.message`.
+        """
+        if update.message is not None:
+            return update.message
+        return cast(Message | None, getattr(update, "effective_message", None))
 
     @staticmethod
     def _chat_id_from_update_or_query(*, update: Update, query: object) -> int | None:
@@ -1875,9 +1975,10 @@ class TelegramBridge:
 
     @staticmethod
     async def _reply(update: Update, text: str) -> Message | None:
-        if update.message is None:
+        message = TelegramBridge._anchor_message(update)
+        if message is None:
             return None
-        return await TelegramBridge._reply_markdown_message(update.message, text=text)
+        return await TelegramBridge._reply_markdown_message(message, text=text)
 
     @staticmethod
     async def _reply_message(message: Message | None, text: str) -> Message | None:
@@ -1887,9 +1988,10 @@ class TelegramBridge:
 
     @staticmethod
     async def _reply_agent(update: Update, text: str) -> Message | None:
-        if update.message is None:
+        message = TelegramBridge._anchor_message(update)
+        if message is None:
             return None
-        return await TelegramBridge._reply_markdown_message(update.message, text=text)
+        return await TelegramBridge._reply_markdown_message(message, text=text)
 
     @staticmethod
     def _to_telegram_entity(entity: MarkdownMessageEntity) -> MessageEntity:
@@ -1906,11 +2008,12 @@ class TelegramBridge:
     async def _reply_activity_block(
         update: Update, block: AgentActivityBlock, *, workspace: Path | None = None
     ) -> None:
-        if update.message is None:
+        message = TelegramBridge._anchor_message(update)
+        if message is None:
             return
 
         text = TelegramBridge._format_activity_block(block, workspace=workspace)
-        await TelegramBridge._reply_markdown_message(update.message, text=text)
+        await TelegramBridge._reply_markdown_message(message, text=text)
 
     @staticmethod
     def _format_activity_block(block: AgentActivityBlock, *, workspace: Path | None = None) -> str:
@@ -2503,13 +2606,14 @@ class TelegramBridge:
 
     @staticmethod
     async def _send_image(update: Update, payload: ImagePayload) -> None:
-        if update.message is None:
+        message = TelegramBridge._anchor_message(update)
+        if message is None:
             return
 
         raw = base64.b64decode(payload.data_base64)
         extension = "jpg" if payload.mime_type == "image/jpeg" else "bin"
         input_file = InputFile(BytesIO(raw), filename=f"agent-image.{extension}")
-        await update.message.reply_photo(photo=input_file)
+        await message.reply_photo(photo=input_file)
 
     @staticmethod
     async def _send_image_to_chat(
@@ -2534,7 +2638,8 @@ class TelegramBridge:
 
     @staticmethod
     async def _send_file(update: Update, payload: FilePayload) -> None:
-        if update.message is None:
+        message = TelegramBridge._anchor_message(update)
+        if message is None:
             return
 
         if payload.text_content is not None:
@@ -2545,7 +2650,7 @@ class TelegramBridge:
             raw = b""
 
         input_file = InputFile(BytesIO(raw), filename=payload.name)
-        await update.message.reply_document(document=input_file)
+        await message.reply_document(document=input_file)
 
     @staticmethod
     async def _send_file_to_chat(

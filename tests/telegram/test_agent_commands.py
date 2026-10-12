@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import base64
 
-from telegram import Message
+from telegram import InlineKeyboardButton, Message
 from telegram_acp_bot.telegram import bridge as bridge_module
+from telegram_acp_bot.telegram.constants import (
+    AGENT_COMMAND_KEYBOARD_COLUMNS,
+    AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA,
+    AGENT_COMMAND_KEYBOARD_INFO_LABEL,
+    AGENT_COMMAND_KEYBOARD_MAX_ROWS,
+)
 from tests.telegram.support import *
 
 GOAL_COMMAND = AgentCommand(name="goal", description="Set or manage a persistent goal", hint="<objective> | status")
@@ -14,6 +20,38 @@ RESEARCH_COMMAND = AgentCommand(name="deep-research", description="Research a to
 
 def _fake_message(*, text: str | None = None, caption: str | None = None) -> Message:
     return cast(Message, SimpleNamespace(text=text, caption=caption))
+
+
+class TapQuery:
+    """Callback query whose tapped message can be any double, including nothing at all."""
+
+    def __init__(self, data: str, *, message: object) -> None:
+        self.data = data
+        self.message = message
+        self.answers: list[str] = []
+
+    async def answer(self, text: str | None = None) -> None:
+        self.answers.append(text or "")
+
+
+def make_callback_update(
+    data: str,
+    *,
+    chat_id: object = TEST_CHAT_ID,
+    chat_type: str = "private",
+    tapped_text: str = "2 agent commands. Tap one to run it.",
+) -> tuple[Update, TapQuery, DummyMessage]:
+    """A tap on the bot's own keyboard: no inbound message, only the tapped one."""
+    tapped = DummyMessage(tapped_text, message_id=7)
+    query = TapQuery(data, message=tapped)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=1, username=None),
+        effective_chat=None if chat_id is None else SimpleNamespace(id=chat_id, type=chat_type),
+        callback_query=query,
+        message=None,
+        effective_message=tapped,
+    )
+    return cast(Update, update), query, tapped
 
 
 def make_commands_bridge(
@@ -33,27 +71,159 @@ def make_commands_bridge(
     return TelegramBridge(config=config, agent_service=cast(AgentService, service)), service
 
 
-async def test_cmds_lists_advertised_commands_with_description_and_hint():
+def _keyboard_rows(message: DummyMessage) -> tuple[tuple[InlineKeyboardButton, ...], ...]:
+    reply_markup = message.reply_kwargs[-1]["reply_markup"]
+    assert isinstance(reply_markup, InlineKeyboardMarkup)
+    return reply_markup.inline_keyboard
+
+
+async def test_cmds_shows_one_button_per_advertised_command():
     bridge, _ = make_commands_bridge((GOAL_COMMAND, RESEARCH_COMMAND))
     update = make_update(with_message=True)
 
     await bridge.cmds(update, make_context())
 
     assert update.message is not None
-    listing = update.message.replies[0]
-    assert "/goal: Set or manage a persistent goal —" in listing
-    assert "<objective> | status" in listing
-    assert "/deep-research: Research a topic" in listing
+    assert "Tap one to run it" in update.message.replies[0]
+    buttons = [button for row in _keyboard_rows(update.message) for button in row]
+    assert [button.text for button in buttons] == ["/goal", "/deep-research", AGENT_COMMAND_KEYBOARD_INFO_LABEL]
+    assert buttons[0].callback_data == "cmd|goal"
+    assert buttons[1].callback_data == "cmd|deep-research"
+    assert buttons[-1].callback_data == AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA
 
 
-async def test_cmds_trims_a_description_longer_than_the_budget():
-    bridge, _ = make_commands_bridge((AgentCommand(name="simplify", description="a" * 101),))
+async def test_cmds_keyboard_stops_at_the_configured_number_of_rows():
+    commands = tuple(
+        AgentCommand(name=f"cmd{index}", description=f"Command {index}")
+        for index in range(AGENT_COMMAND_KEYBOARD_MAX_ROWS * AGENT_COMMAND_KEYBOARD_COLUMNS + 5)
+    )
+    bridge, _ = make_commands_bridge(commands)
     update = make_update(with_message=True)
 
     await bridge.cmds(update, make_context())
 
     assert update.message is not None
-    assert "/simplify: " + "a" * 99 + "…" in update.message.replies[0]
+    rows = _keyboard_rows(update.message)
+    assert len(rows) == AGENT_COMMAND_KEYBOARD_MAX_ROWS + 1
+    assert all(len(row) == AGENT_COMMAND_KEYBOARD_COLUMNS for row in rows[:AGENT_COMMAND_KEYBOARD_MAX_ROWS])
+
+
+async def test_cmds_keyboard_skips_a_name_that_cannot_be_a_callback():
+    bridge, _ = make_commands_bridge((AgentCommand(name="weird.name", description="Cannot be tapped"),))
+    update = make_update(with_message=True)
+
+    await bridge.cmds(update, make_context())
+
+    assert update.message is not None
+    buttons = [button for row in _keyboard_rows(update.message) for button in row]
+    assert [button.text for button in buttons] == [AGENT_COMMAND_KEYBOARD_INFO_LABEL]
+
+
+async def test_tapping_a_command_button_forwards_the_command_to_the_prompt():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+
+    update, query, tapped = make_callback_update("cmd|goal")
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert query.answers[-1] == "Running /goal."
+    assert [text for text, _ in service.prompts] == ["/goal"]
+    assert tapped.replies == ["ok"]
+
+
+async def test_tapping_a_hyphenated_command_button_forwards_it():
+    bridge, service = make_commands_bridge((RESEARCH_COMMAND,))
+
+    update, _, _ = make_callback_update("cmd|deep-research")
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert [text for text, _ in service.prompts] == ["/deep-research"]
+
+
+async def test_tapping_the_info_button_shows_descriptions_and_hints():
+    bridge, _ = make_commands_bridge((GOAL_COMMAND, AgentCommand(name="simplify", description="a" * 101)))
+
+    update, query, tapped = make_callback_update(AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA)
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert query.answers[-1] == "Showing descriptions."
+    listing = tapped.replies[0]
+    assert "/goal: Set or manage a persistent goal —" in listing
+    assert "<objective> | status" in listing
+    assert "/simplify: " + "a" * 99 + "…" in listing
+
+
+async def test_tapping_the_info_button_after_the_session_stops_answers_without_a_reply():
+    bridge, _ = make_commands_bridge(())
+
+    update, query, tapped = make_callback_update(AGENT_COMMAND_KEYBOARD_INFO_CALLBACK_DATA)
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert query.answers[-1] == "No commands advertised any more."
+    assert tapped.replies == []
+
+
+async def test_tapping_a_command_the_agent_stopped_advertising_is_not_forwarded():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+
+    update, query, tapped = make_callback_update("cmd|quest")
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert "no longer advertises" in query.answers[-1]
+    assert tapped.replies == []
+    assert service.prompts == []
+
+
+async def test_tapping_a_button_from_another_keyboard_is_an_invalid_action():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+
+    update, query, _ = make_callback_update("resume|1")
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert query.answers[-1] == "Invalid action."
+    assert service.prompts == []
+
+
+async def test_tapping_without_a_chat_answers_missing_chat():
+    bridge, _ = make_commands_bridge((GOAL_COMMAND,))
+
+    update, query, _ = make_callback_update("cmd|goal", chat_id=None)
+    query.message = None
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert query.answers[-1] == "Missing chat."
+
+
+async def test_tapping_without_a_callback_query_does_nothing():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+    update = make_update(with_message=False)
+    update.callback_query = None
+
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert service.prompts == []
+
+
+async def test_tapping_is_denied_for_a_sender_outside_the_allowlist():
+    service = AgentCommandsService((GOAL_COMMAND,))
+    bridge = TelegramBridge(
+        config=make_config(token="TOKEN", allowed_user_ids=[999], workspace="."),
+        agent_service=cast(AgentService, service),
+    )
+
+    update, query, _ = make_callback_update("cmd|goal")
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert query.answers[-1] == "Access denied."
+    assert service.prompts == []
+
+
+async def test_group_button_tap_runs_the_command_without_an_at_mention():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,), group_require_mention=True)
+
+    update, _, _ = make_callback_update("cmd|goal", chat_type="group")
+    await bridge.on_agent_command_callback(update, make_context())
+
+    assert [text for text, _ in service.prompts] == ["/goal"]
 
 
 async def test_cmds_says_no_commands_are_advertised_before_the_first_prompt():
@@ -64,6 +234,14 @@ async def test_cmds_says_no_commands_are_advertised_before_the_first_prompt():
 
     assert update.message is not None
     assert "has not advertised any slash commands yet" in update.message.replies[0]
+
+
+async def test_cmds_without_a_message_to_answer_to_sends_nothing():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+
+    await bridge.cmds(make_update(with_message=False), make_context())
+
+    assert service.prompts == []
 
 
 async def test_cmds_says_the_agent_does_not_advertise_commands_without_the_getter():
@@ -255,5 +433,6 @@ async def test_bot_command_written_in_a_caption_runs_the_bot_handler():
     await bridge.on_agent_command(update, make_context())
 
     assert update.message is not None
-    assert "/goal: Set or manage a persistent goal" in update.message.replies[0]
+    assert "Tap one to run it" in update.message.replies[0]
+    assert _keyboard_rows(update.message)[0][0].callback_data == "cmd|goal"
     assert service.prompts == []
