@@ -92,9 +92,15 @@ def make_elicitation_bridge(
     resolve: bool = True,
     error: Exception | None = None,
     allowed_ids: set[int] | None = None,
+    compact: bool = False,
 ) -> tuple[TelegramBridge, ElicitationService]:
     service = ElicitationService(resolve=resolve, error=error)
-    config = make_config(token="TOKEN", allowed_user_ids=list(allowed_ids or []), workspace=".")
+    config = make_config(
+        token="TOKEN",
+        allowed_user_ids=list(allowed_ids or []),
+        workspace=".",
+        compact_activity=compact,
+    )
     bridge = TelegramBridge(config=config, agent_service=cast(AgentService, service))
     bridge._app = cast(Application, SimpleNamespace(bot=DummyBot()))
     return bridge, service
@@ -462,6 +468,32 @@ async def test_a_question_dropped_from_the_form_list_is_declined_and_loses_its_k
         assert request.request_id not in bridge._elicitation_forms
         assert request.request_id not in bridge._elicitation_messages
         assert request.request_id not in bridge._elicitation_selections
+
+
+async def test_offering_a_question_closes_the_status_bubble_and_the_next_activity_opens_a_new_one():
+    bridge, _ = make_elicitation_bridge(compact=True)
+    bot = _bot(bridge)
+    think = AgentActivityBlock(kind="think", title="Checking", status="in_progress", text="")
+    await bridge.on_activity_event(TEST_CHAT_ID, think)
+    old_bubble = bridge._compact_status_msg_id[TEST_CHAT_ID]
+
+    await bridge.on_elicitation_request(_request())
+
+    # The pre-question bubble is retired, not deleted: it stays as history.
+    assert TEST_CHAT_ID not in bridge._compact_status_msg_id
+    assert TEST_CHAT_ID not in bridge._compact_status_label
+    assert TEST_CHAT_ID not in bridge._compact_status_tasks
+    assert bot.deleted_message_ids == []
+
+    await bridge.on_activity_event(
+        TEST_CHAT_ID, AgentActivityBlock(kind="execute", title="Run ls", status="in_progress", text="")
+    )
+
+    new_bubble = bridge._compact_status_msg_id[TEST_CHAT_ID]
+    assert new_bubble != old_bubble
+    assert not any(edit.get("message_id") == old_bubble for edit in bot.edited_messages), (
+        "the retired bubble was overwritten after the question"
+    )
 
 
 async def test_a_burst_in_one_chat_does_not_evict_another_chat_open_question():

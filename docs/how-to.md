@@ -307,7 +307,9 @@ Báo cáo theo
 [ ⏭️ Skip this question ]
 ```
 
-Tapping an option sends that answer to the agent and the prompt continues from it. A question with several answers
+Tapping an option sends that answer to the agent and the prompt continues from it. The status bubble that was tracking
+the agent's work closes as history when the question is sent, so the activity after your tap — and the agent's final
+answer — arrive in a fresh bubble instead of overwriting the one that announced the question. A question with several answers
 (multi-select) marks each pick with `✓` as you tap and waits for `✅ Send my answer`, so one response can carry several
 options. `⏭️ Skip this question` declines the elicitation, which lets the agent proceed without an answer instead of
 waiting. A form of two questions arrives as one message listing both prompts and offering both sets of buttons; the

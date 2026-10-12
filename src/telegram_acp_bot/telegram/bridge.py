@@ -772,6 +772,8 @@ class TelegramBridge:
             reply_markup=self._elicitation_keyboard(request, selections={}),
         )
         self._elicitation_messages[request.request_id] = getattr(sent, "message_id", None)
+        if sent is not None:
+            self._close_compact_status_bubble(request.chat_id)
         with bind_log_context(chat_id=request.chat_id):
             logger.info(
                 "Elicitation offered: request_id=%s questions=%s message_id=%s",
@@ -1531,6 +1533,17 @@ class TelegramBridge:
             return
         with suppress(TelegramError):
             await app.bot.delete_message(chat_id=chat_id, message_id=status_msg_id)
+
+    def _close_compact_status_bubble(self, chat_id: int) -> None:
+        """End the compact status bubble without deleting it, so the next one opens fresh.
+
+        A question the user answers marks a turn in the conversation: the bubble that was showing
+        the pre-question work stays as history, and later activity and the final reply get their
+        own bubble instead of overwriting it.
+        """
+        self._compact_status_msg_id.pop(chat_id, None)
+        self._stop_compact_status(chat_id)
+        self._compact_status_label.pop(chat_id, None)
 
     def _stop_compact_status(self, chat_id: int) -> None:
         task = self._compact_status_tasks.pop(chat_id, None)
