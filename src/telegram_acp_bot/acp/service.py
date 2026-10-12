@@ -11,6 +11,7 @@ import mimetypes
 import os
 import signal
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
@@ -62,11 +63,13 @@ from telegram_acp_bot.acp.session import _LiveSession, _PendingPermission
 from telegram_acp_bot.core.session_registry import SessionRegistry
 from telegram_acp_bot.logging_context import bind_log_context, log_text_preview
 from telegram_acp_bot.mcp.state import (
+    append_pending_media,
     load_last_session_id,
     load_session_chat_map,
     save_last_session_id,
     save_prompt_message_id,
     save_session_chat_map,
+    take_pending_media,
 )
 
 logger = logging.getLogger(__name__)
@@ -748,6 +751,39 @@ class AcpAgentService:
             return
         async with self._channel_state_lock:
             await asyncio.to_thread(save_last_session_id, self._channel_state_file, session_id)
+
+    async def record_pending_media(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        file_id: str,
+        mime_type: str | None,
+    ) -> None:
+        """Queue an unclaimed media reference so a later prompt can fetch it on demand."""
+
+        if self._channel_state_file is None:
+            return
+        queued_at = datetime.now(UTC).isoformat(timespec="seconds")
+        async with self._channel_state_lock:
+            await asyncio.to_thread(
+                append_pending_media,
+                self._channel_state_file,
+                chat_id=chat_id,
+                file_id=file_id,
+                message_id=message_id,
+                mime_type=mime_type,
+                queued_at=queued_at,
+            )
+
+    async def take_pending_media(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
+        """Claim and clear the media references queued for a chat."""
+
+        if self._channel_state_file is None:
+            return ()
+        async with self._channel_state_lock:
+            refs = await asyncio.to_thread(take_pending_media, self._channel_state_file, chat_id=chat_id)
+        return tuple(refs)
 
     async def set_prompt_message_context(self, *, session_id: str, message_id: int | None) -> None:
         """Persist the active Telegram prompt message id for the current turn."""

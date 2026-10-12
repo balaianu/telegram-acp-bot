@@ -34,6 +34,12 @@ The bot entrypoint is `telegram-acp-bot`.
   Flag: when set, group messages are answered only if they `@mention` the bot or reply to
   one of its messages. Private chats are unaffected.
 
+- `--group-media-queue`
+  Default: {term}`ACP_TELEGRAM_GROUP_MEDIA_QUEUE`.
+  Flag: when set, media in group messages that the mention gate ignores is kept as a
+  `file_id` reference and announced to the agent on its next answered prompt, where
+  `telegram_fetch_attachment` can download it on demand. Needs `--group-require-mention`.
+
 - `--workspace`
   Default workspace used by `/new` when no workspace path is provided.
 

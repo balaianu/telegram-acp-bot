@@ -37,7 +37,8 @@ The file must be a JSON object. All keys are optional. Missing keys fall back to
     "allowed_user_ids": [123456789],
     "allowed_usernames": ["alice", "@bob"],
     "schedule_languages": ["en", "es"],
-    "group_require_mention": true
+    "group_require_mention": true,
+    "group_media_queue": true
   },
   "acp": {
     "agent_command": "npx @zed-industries/codex-acp",
@@ -86,6 +87,13 @@ ACP_TELEGRAM_GROUP_REQUIRE_MENTION
   Messages that neither mention the bot nor reply to one of its messages are ignored;
   private chats are always answered. Equivalent to `--group-require-mention`.
   Default: unset, so group chats answer every allowed sender.
+
+ACP_TELEGRAM_GROUP_MEDIA_QUEUE
+  Truthy values (`1`, `true`, `yes`, `on`) keep group media that the mention gate ignores instead of dropping it.
+  Only the Telegram `file_id` is queued per chat; the next answered prompt lists those references and the agent
+  downloads one with `telegram_fetch_attachment` when it actually needs it. Requires
+  {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION`, since without a gate every message is already answered.
+  Default: unset, so unmentioned group media is discarded.
 
 ACP_AGENT_COMMAND
   Command line used to launch the ACP agent process.
@@ -158,6 +166,7 @@ Key flags that map to config file or environment variable equivalents:
 | `--allowed-username` | `TELEGRAM_ALLOWED_USERNAMES` | `telegram.allowed_usernames` |
 | `--schedule-language` | `ACP_SCHEDULE_LANGUAGES` | `telegram.schedule_languages` |
 | `--group-require-mention` | `ACP_TELEGRAM_GROUP_REQUIRE_MENTION` | `telegram.group_require_mention` |
+| `--group-media-queue` | `ACP_TELEGRAM_GROUP_MEDIA_QUEUE` | `telegram.group_media_queue` |
 | `--agent-command` | `ACP_AGENT_COMMAND` | `acp.agent_command` |
 | `--restart-command` | `ACP_RESTART_COMMAND` | `acp.restart_command` |
 | `--permission-mode` | `ACP_PERMISSION_MODE` | `acp.permission_mode` |

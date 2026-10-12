@@ -10,6 +10,7 @@ from tempfile import gettempdir, mkstemp
 STATE_FILE_ENV = "ACP_TELEGRAM_CHANNEL_STATE_FILE"
 TOKEN_ENV = "ACP_TELEGRAM_BOT_TOKEN"
 STATE_FILE_MODE = 0o600
+MAX_PENDING_MEDIA_PER_CHAT = 20
 
 
 def default_state_file(*, pid: int) -> Path:
@@ -46,13 +47,8 @@ def save_session_chat_map(path: Path, mapping: dict[str, int]) -> None:
     """Persist `session_id -> chat_id` mapping atomically."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _load_raw_state(path)
-    payload: dict[str, object] = {"sessions": mapping}
-    if isinstance(existing.get("last_session_id"), str):
-        payload["last_session_id"] = existing["last_session_id"]
-    prompt_message_ids = _clean_prompt_message_ids(existing.get("prompt_message_ids"))
-    if prompt_message_ids:
-        payload["prompt_message_ids"] = prompt_message_ids
+    payload = _base_state_payload(_load_raw_state(path))
+    payload["sessions"] = mapping
     _write_json_atomic(path, payload)
 
 
@@ -67,14 +63,11 @@ def save_last_session_id(path: Path, session_id: str | None) -> None:
     """Persist the last active session id while keeping session mappings."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _load_raw_state(path)
-    sessions = existing.get("sessions")
-    payload: dict[str, object] = {"sessions": sessions if isinstance(sessions, dict) else {}}
-    if session_id is not None:
+    payload = _base_state_payload(_load_raw_state(path))
+    if session_id is None:
+        payload.pop("last_session_id", None)
+    else:
         payload["last_session_id"] = session_id
-    prompt_message_ids = _clean_prompt_message_ids(existing.get("prompt_message_ids"))
-    if prompt_message_ids:
-        payload["prompt_message_ids"] = prompt_message_ids
     _write_json_atomic(path, payload)
 
 
@@ -83,10 +76,7 @@ def save_prompt_message_id(path: Path, session_id: str, message_id: int | None) 
 
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = _load_raw_state(path)
-    sessions = existing.get("sessions")
-    payload: dict[str, object] = {"sessions": sessions if isinstance(sessions, dict) else {}}
-    if isinstance(existing.get("last_session_id"), str):
-        payload["last_session_id"] = existing["last_session_id"]
+    payload = _base_state_payload(existing)
 
     prompt_message_ids = _clean_prompt_message_ids(existing.get("prompt_message_ids"))
     if message_id is None:
@@ -95,7 +85,106 @@ def save_prompt_message_id(path: Path, session_id: str, message_id: int | None) 
         prompt_message_ids[session_id] = message_id
     if prompt_message_ids:
         payload["prompt_message_ids"] = prompt_message_ids
+    else:
+        payload.pop("prompt_message_ids", None)
     _write_json_atomic(path, payload)
+
+
+def load_pending_media(path: Path) -> dict[str, list[dict[str, object]]]:
+    """Load `chat_id -> queued media references` from disk."""
+
+    return _clean_pending_media(_load_raw_state(path).get("pending_media"))
+
+
+def append_pending_media(  # noqa: PLR0913
+    path: Path,
+    *,
+    chat_id: int,
+    file_id: str,
+    message_id: int,
+    mime_type: str | None,
+    queued_at: str,
+) -> None:
+    """Queue one media reference for a chat, dropping the oldest beyond the cap."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_raw_state(path)
+    payload = _base_state_payload(existing)
+
+    pending = _clean_pending_media(existing.get("pending_media"))
+    refs = pending.get(str(chat_id), [])
+    if any(ref["file_id"] == file_id for ref in refs):
+        return
+    refs.append({"file_id": file_id, "message_id": message_id, "mime_type": mime_type, "queued_at": queued_at})
+    pending[str(chat_id)] = refs[-MAX_PENDING_MEDIA_PER_CHAT:]
+    payload["pending_media"] = pending
+    _write_json_atomic(path, payload)
+
+
+def take_pending_media(path: Path, *, chat_id: int) -> list[dict[str, object]]:
+    """Return and clear the queued media references for a chat."""
+
+    existing = _load_raw_state(path)
+    pending = _clean_pending_media(existing.get("pending_media"))
+    refs = pending.pop(str(chat_id), [])
+    if not refs:
+        return []
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _base_state_payload(existing)
+    if pending:
+        payload["pending_media"] = pending
+    else:
+        payload.pop("pending_media", None)
+    _write_json_atomic(path, payload)
+    return refs
+
+
+def _base_state_payload(existing: dict[str, object]) -> dict[str, object]:
+    """Start a payload with every section that a writer must not silently drop."""
+
+    sessions = existing.get("sessions")
+    payload: dict[str, object] = {"sessions": sessions if isinstance(sessions, dict) else {}}
+    if isinstance(existing.get("last_session_id"), str):
+        payload["last_session_id"] = existing["last_session_id"]
+    pending = _clean_pending_media(existing.get("pending_media"))
+    if pending:
+        payload["pending_media"] = pending
+    prompt_message_ids = _clean_prompt_message_ids(existing.get("prompt_message_ids"))
+    if prompt_message_ids:
+        payload["prompt_message_ids"] = prompt_message_ids
+    return payload
+
+
+def _clean_pending_media(raw: object) -> dict[str, list[dict[str, object]]]:
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[str, list[dict[str, object]]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, list):
+            continue
+        refs = [_clean_media_ref(item) for item in value]
+        kept = [ref for ref in refs if ref is not None]
+        if kept:
+            cleaned[key] = kept
+    return cleaned
+
+
+def _clean_media_ref(item: object) -> dict[str, object] | None:
+    if not isinstance(item, dict):
+        return None
+    file_id = item.get("file_id")
+    if not isinstance(file_id, str) or not file_id:
+        return None
+    message_id = item.get("message_id")
+    mime_type = item.get("mime_type")
+    queued_at = item.get("queued_at")
+    return {
+        "file_id": file_id,
+        "message_id": message_id if isinstance(message_id, int) else 0,
+        "mime_type": mime_type if isinstance(mime_type, str) else None,
+        "queued_at": queued_at if isinstance(queued_at, str) else "",
+    }
 
 
 def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:

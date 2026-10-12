@@ -569,12 +569,18 @@ def make_context(*, args: list[str] | None = None, application: object | None = 
     return SimpleNamespace(args=args or [], bot=DummyBot(), application=application)
 
 
-def make_bridge(*, allowed_ids: set[int] | None = None, group_require_mention: bool = False) -> TelegramBridge:
+def make_bridge(
+    *,
+    allowed_ids: set[int] | None = None,
+    group_require_mention: bool = False,
+    group_media_queue: bool = False,
+) -> TelegramBridge:
     config = make_config(
         token="TOKEN",
         allowed_user_ids=list(allowed_ids or set()),
         workspace=".",
         group_require_mention=group_require_mention,
+        group_media_queue=group_media_queue,
     )
     return TelegramBridge(config=config, agent_service=EchoAgentService(SessionRegistry()))
 

@@ -24,6 +24,7 @@ class EchoAgentService:
         self._registry = registry
         self._session_permission_mode: dict[int, PermissionMode] = {}
         self._next_prompt_auto_approve: dict[int, bool] = {}
+        self._pending_media: dict[int, list[dict[str, object]]] = {}
         self._permission_prompt_handler: Callable[[PermissionRequest], Awaitable[None]] | None = None
         self._activity_event_handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None = None
 
@@ -102,6 +103,25 @@ class EchoAgentService:
 
     async def clear(self, *, chat_id: int) -> bool:
         return await self.stop(chat_id=chat_id)
+
+    async def record_pending_media(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        file_id: str,
+        mime_type: str | None,
+    ) -> None:
+        ref: dict[str, object] = {
+            "file_id": file_id,
+            "message_id": message_id,
+            "mime_type": mime_type,
+            "queued_at": "echo",
+        }
+        self._pending_media.setdefault(chat_id, []).append(ref)
+
+    async def take_pending_media(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
+        return tuple(self._pending_media.pop(chat_id, []))
 
     def get_permission_policy(self, *, chat_id: int) -> PermissionPolicy | None:
         if self._registry.get(chat_id) is None:

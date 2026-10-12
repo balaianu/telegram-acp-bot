@@ -106,6 +106,11 @@ def test_telegram_group_require_mention_not_boolean(tmp_path: Path) -> None:
         load_config_file(write_config(tmp_path, {"telegram": {"group_require_mention": "yes"}}))
 
 
+def test_telegram_group_media_queue_not_boolean(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.group_media_queue' must be a boolean"):
+        load_config_file(write_config(tmp_path, {"telegram": {"group_media_queue": "yes"}}))
+
+
 def test_acp_not_object(tmp_path: Path) -> None:
     with pytest.raises(ConfigFileError, match=r"'acp' must be a JSON object"):
         load_config_file(write_config(tmp_path, {"acp": "string"}))

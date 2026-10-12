@@ -121,6 +121,34 @@ def _text_mentions_handle(text: str | None, entities: tuple[MessageEntity, ...] 
     )
 
 
+def _media_references(message: Message) -> tuple[tuple[str, str | None], ...]:
+    """Return `(file_id, mime_type)` for media a message carries, largest photo rendition only."""
+
+    if message.photo:
+        return ((message.photo[-1].file_id, "image/jpeg"),)
+    document = message.document
+    if document is not None:
+        return ((document.file_id, document.mime_type),)
+    return ()
+
+
+PENDING_MEDIA_HEADER = (
+    "Pending Telegram attachments (not downloaded yet). "
+    "Call telegram_fetch_attachment with a file_id when you actually need one:"
+)
+
+
+def _with_pending_media(text: str, refs: tuple[dict[str, object], ...]) -> str:
+    """Prefix a prompt with the media references the mention gate parked for this chat."""
+
+    if not refs:
+        return text
+    lines = [PENDING_MEDIA_HEADER]
+    lines.extend(f"- file_id={ref['file_id']} message_id={ref['message_id']} mime={ref['mime_type']}" for ref in refs)
+    notice = "\n".join(lines)
+    return f"{notice}\n\n{text}" if text else notice
+
+
 class TelegramBridge:
     """Telegram command and message handlers for the MVP bot."""
 
@@ -857,6 +885,8 @@ class TelegramBridge:
             return
 
         if self._config.group_require_mention and self._ignores_unmentioned_group_message(update, context):
+            if self._config.group_media_queue:
+                await self._queue_unclaimed_group_media(update=update)
             return
 
         prompt_input = await self._prompt_input(update=update, context=context)
@@ -1046,12 +1076,16 @@ class TelegramBridge:
         message = update.message
         if message is None:
             return None
+        chat_id = self._chat_id(update)
         text = message.text or message.caption or ""
         images = await self._extract_prompt_images(message=message, context=context)
         files = await self._extract_prompt_files(message=message, context=context)
         if not text and not images and not files:
             return None
-        return _PromptInput(chat_id=self._chat_id(update), text=text, images=images, files=files)
+        if self._config.group_media_queue:
+            pending = await self._agent_service.take_pending_media(chat_id=chat_id)
+            text = _with_pending_media(text, pending)
+        return _PromptInput(chat_id=chat_id, text=text, images=images, files=files)
 
     async def _ensure_session_for_chat(self, *, update: Update, chat_id: int) -> bool:
         if self._agent_service.get_workspace(chat_id=chat_id) is not None:
@@ -1471,6 +1505,26 @@ class TelegramBridge:
         chat_id = chat.id if chat is not None else None
         logger.info("Group message in chat=%s ignored: no @%s mention", chat_id, handle)
         return True
+
+    async def _queue_unclaimed_group_media(self, *, update: Update) -> None:
+        """Keep a reference to group media that the mention gate drops, so it is not lost.
+
+        Only the Telegram `file_id` is stored; bytes are fetched later by the agent through
+        {py:func}`telegram_acp_bot.mcp.tools.attachments.telegram_fetch_attachment`.
+        """
+        chat = update.effective_chat
+        message = update.message
+        if chat is None or message is None:
+            return
+
+        for file_id, mime_type in _media_references(message):
+            await self._agent_service.record_pending_media(
+                chat_id=chat.id,
+                message_id=message.message_id,
+                file_id=file_id,
+                mime_type=mime_type,
+            )
+            logger.info("Queued unclaimed media file_id=%s from chat=%s", file_id[:12], chat.id)
 
     @staticmethod
     def _chat_id(update: Update) -> int:

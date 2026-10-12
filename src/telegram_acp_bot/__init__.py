@@ -38,6 +38,7 @@ ALLOWED_USER_IDS_ENV = "TELEGRAM_ALLOWED_USER_IDS"
 ALLOWED_USERNAMES_ENV = "TELEGRAM_ALLOWED_USERNAMES"
 SCHEDULE_LANGUAGES_ENV = "ACP_SCHEDULE_LANGUAGES"
 GROUP_REQUIRE_MENTION_ENV = "ACP_TELEGRAM_GROUP_REQUIRE_MENTION"
+GROUP_MEDIA_QUEUE_ENV = "ACP_TELEGRAM_GROUP_MEDIA_QUEUE"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
@@ -154,6 +155,16 @@ def get_parser() -> argparse.ArgumentParser:
             "Ignore group messages that do not @mention the bot (or reply to one of its messages). "
             "Private chats are always answered. Also enabled by a truthy "
             f"{GROUP_REQUIRE_MENTION_ENV}."
+        ),
+    )
+    parser.add_argument(
+        "--group-media-queue",
+        action="store_true",
+        default=_env_flag(GROUP_MEDIA_QUEUE_ENV),
+        help=(
+            "Keep group media that the mention gate ignores as file_id references, then announce them "
+            "on the next accepted prompt so the agent can download only what it needs. "
+            f"Also enabled by a truthy {GROUP_MEDIA_QUEUE_ENV}."
         ),
     )
     parser.add_argument(
@@ -445,6 +456,7 @@ def main(args: list[str] | None = None) -> int:
     group_require_mention = opts.group_require_mention or bool(
         config_data.get("telegram", {}).get("group_require_mention", False)
     )
+    group_media_queue = opts.group_media_queue or bool(config_data.get("telegram", {}).get("group_media_queue", False))
 
     command_parts = shlex.split(opts.agent_command)
     if not command_parts:
@@ -467,6 +479,7 @@ def main(args: list[str] | None = None) -> int:
         activity_mode=cast(ActivityMode, opts.activity_mode),
         schedule_languages=schedule_languages,
         group_require_mention=group_require_mention,
+        group_media_queue=group_media_queue,
     )
     service = AcpAgentService(
         SessionRegistry(),

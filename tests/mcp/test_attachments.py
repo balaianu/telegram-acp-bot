@@ -153,3 +153,127 @@ async def test_send_attachment_uses_overridden_name_for_mime_inference(
     assert result["ok"] is True
     assert result["delivered_as"] == "photo"
     bot.send_photo.assert_awaited_once()
+
+
+@pytest.fixture
+def channel_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    state_file = tmp_path / "state.json"
+    save_session_chat_map(state_file, {"s1": 123})
+    monkeypatch.setenv(TOKEN_ENV, "TOKEN")
+    monkeypatch.setenv(STATE_FILE_ENV, str(state_file))
+    return state_file
+
+
+def make_download_bot(mocker, payload: bytes):
+    bot = mocker.AsyncMock()
+    bot.get_file.return_value.download_as_bytearray = mocker.AsyncMock(return_value=bytearray(payload))
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_writes_into_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, channel_env: Path
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    bot = make_download_bot(mocker, b"jpeg-bytes")
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    result = await mcp_channel.telegram_fetch_attachment(session_id="s1", file_id="f1", mime_type="image/jpeg")
+
+    assert result["ok"] is True
+    path = Path(cast(str, result["path"]))
+    assert path.parent == workspace / mcp_channel.DEFAULT_MEDIA_DIRNAME
+    assert path.suffix == ".jpg"
+    assert path.read_bytes() == b"jpeg-bytes"
+    assert result["mime_type"] == "image/jpeg"
+    assert result["bytes"] == len(b"jpeg-bytes")
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_honours_a_relative_dest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, channel_env: Path
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    bot = make_download_bot(mocker, b"%PDF")
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    result = await mcp_channel.telegram_fetch_attachment(file_id="f1", dest="invoices/hoa-don.pdf")
+
+    assert result["ok"] is True
+    assert Path(cast(str, result["path"])) == workspace / "invoices" / "hoa-don.pdf"
+    assert result["mime_type"] == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_rejects_dest_outside_the_working_directory(mocker, channel_env: Path):
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=make_download_bot(mocker, b"x"))
+
+    result = await mcp_channel.telegram_fetch_attachment(file_id="f1", dest="../../escape.png")
+
+    assert result["ok"] is False
+    assert result["error"] == mcp_channel.MEDIA_OUTSIDE_WORKSPACE_ERROR
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_rejects_dest_that_is_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, channel_env: Path
+):
+    workspace = tmp_path / "ws"
+    (workspace / "dir").mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=make_download_bot(mocker, b"x"))
+
+    result = await mcp_channel.telegram_fetch_attachment(file_id="f1", dest="dir")
+
+    assert result["ok"] is False
+    assert "`dest` is a directory" in cast(str, result["error"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_reports_download_failures(mocker, channel_env: Path):
+    bot = mocker.AsyncMock()
+    bot.get_file.side_effect = OSError("telegram is unreachable")
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    result = await mcp_channel.telegram_fetch_attachment(file_id="f1")
+
+    assert result["ok"] is False
+    assert "download failed for file_id `f1`" in cast(str, result["error"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_reports_an_empty_payload(mocker, channel_env: Path):
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=make_download_bot(mocker, b""))
+
+    result = await mcp_channel.telegram_fetch_attachment(file_id="f1")
+
+    assert result["ok"] is False
+    assert "empty payload" in cast(str, result["error"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_rejects_an_unknown_session(mocker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    save_session_chat_map(tmp_path / "state.json", {"s1": 123})
+    monkeypatch.setenv(TOKEN_ENV, "TOKEN")
+    monkeypatch.setenv(STATE_FILE_ENV, str(tmp_path / "state.json"))
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=make_download_bot(mocker, b"x"))
+
+    result = await mcp_channel.telegram_fetch_attachment(session_id="unknown", file_id="f1")
+
+    assert result["ok"] is False
+    assert "unknown session_id" in cast(str, result["error"])
+
+
+def test_default_media_name_uses_the_digest_and_a_known_extension():
+    named = mcp_channel.default_media_name("f1", "image/png")
+    unnamed = mcp_channel.default_media_name("f1", None)
+    vague = mcp_channel.default_media_name("f1", "application/x-unknown-type")
+
+    assert named.endswith(".png")
+    assert unnamed == named[: -len(".png")]
+    assert vague == unnamed
+    assert "f1" not in named

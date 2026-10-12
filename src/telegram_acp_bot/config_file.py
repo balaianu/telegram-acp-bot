@@ -77,8 +77,13 @@ def _validate_telegram_section(tg: dict[str, Any], path: Path) -> None:
         languages = tg["schedule_languages"]
         if not isinstance(languages, list) or not all(isinstance(x, str) for x in languages):
             raise _err(path, "'telegram.schedule_languages' must be a list of strings")
-    if "group_require_mention" in tg and not isinstance(tg["group_require_mention"], bool):
-        raise _err(path, "'telegram.group_require_mention' must be a boolean")
+    _require_optional_bool(tg, path, "group_require_mention")
+    _require_optional_bool(tg, path, "group_media_queue")
+
+
+def _require_optional_bool(tg: dict[str, Any], path: Path, key: str) -> None:
+    if key in tg and not isinstance(tg[key], bool):
+        raise _err(path, f"'telegram.{key}' must be a boolean")
 
 
 def _validate_acp_section(acp: dict[str, Any], path: Path) -> None:

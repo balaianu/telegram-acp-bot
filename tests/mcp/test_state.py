@@ -9,17 +9,36 @@ from pathlib import Path
 import pytest
 
 from tests.mcp.support import (
+    MAX_PENDING_MEDIA_PER_CHAT,
     STATE_FILE_PRIVATE_MODE,
+    TEST_MEDIA_CHAT_ID,
+    TEST_MEDIA_FILE_ID,
+    TEST_MEDIA_MESSAGE_ID,
+    TEST_QUEUED_AT,
+    append_pending_media,
     channel_state_module,
     load_last_session_id,
+    load_pending_media,
     load_prompt_message_id,
     mcp_channel,
     save_last_session_id,
     save_prompt_message_id,
     save_session_chat_map,
+    take_pending_media,
 )
 
 PROMPT_MESSAGE_ID = 42
+
+
+def queue_media(path: Path, *, chat_id: int = TEST_MEDIA_CHAT_ID, file_id: str = TEST_MEDIA_FILE_ID) -> None:
+    append_pending_media(
+        path,
+        chat_id=chat_id,
+        file_id=file_id,
+        message_id=TEST_MEDIA_MESSAGE_ID,
+        mime_type="image/jpeg",
+        queued_at=TEST_QUEUED_AT,
+    )
 
 
 def test_load_session_chat_map_handles_invalid_json(tmp_path: Path):
@@ -129,3 +148,120 @@ def test_state_file_atomic_write_removes_temp_file_on_replace_error(tmp_path: Pa
         save_session_chat_map(state_file, {"s1": 123})
 
     assert list(tmp_path.glob(f".{state_file.name}*.tmp")) == []
+
+
+def test_append_pending_media_round_trips(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+
+    queue_media(state_file)
+
+    assert load_pending_media(state_file) == {
+        str(TEST_MEDIA_CHAT_ID): [
+            {
+                "file_id": TEST_MEDIA_FILE_ID,
+                "message_id": TEST_MEDIA_MESSAGE_ID,
+                "mime_type": "image/jpeg",
+                "queued_at": TEST_QUEUED_AT,
+            }
+        ]
+    }
+
+
+def test_append_pending_media_keeps_one_reference_per_file_id(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    queue_media(state_file)
+
+    queue_media(state_file)
+
+    assert len(load_pending_media(state_file)[str(TEST_MEDIA_CHAT_ID)]) == 1
+
+
+def test_append_pending_media_drops_the_oldest_references_beyond_the_cap(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+
+    for index in range(MAX_PENDING_MEDIA_PER_CHAT + 5):
+        queue_media(state_file, file_id=f"file-{index}")
+
+    refs = load_pending_media(state_file)[str(TEST_MEDIA_CHAT_ID)]
+    assert len(refs) == MAX_PENDING_MEDIA_PER_CHAT
+    assert refs[0]["file_id"] == "file-5"
+
+
+def test_take_pending_media_returns_and_clears_only_that_chat(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    queue_media(state_file)
+    queue_media(state_file, chat_id=456, file_id="other")
+
+    refs = take_pending_media(state_file, chat_id=TEST_MEDIA_CHAT_ID)
+
+    assert [ref["file_id"] for ref in refs] == [TEST_MEDIA_FILE_ID]
+    assert list(load_pending_media(state_file)) == ["456"]
+
+
+def test_take_pending_media_does_not_write_when_nothing_is_queued(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+
+    assert take_pending_media(state_file, chat_id=TEST_MEDIA_CHAT_ID) == []
+    assert not state_file.exists()
+
+
+def test_take_pending_media_keeps_other_state_sections(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    save_session_chat_map(state_file, {"s1": TEST_MEDIA_CHAT_ID})
+    save_prompt_message_id(state_file, "s1", PROMPT_MESSAGE_ID)
+    queue_media(state_file)
+
+    take_pending_media(state_file, chat_id=TEST_MEDIA_CHAT_ID)
+
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    assert payload["sessions"] == {"s1": TEST_MEDIA_CHAT_ID}
+    assert payload["prompt_message_ids"] == {"s1": PROMPT_MESSAGE_ID}
+    assert "pending_media" not in payload
+
+
+def test_load_pending_media_drops_invalid_entries(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "pending_media": {
+                    "123": [{"file_id": TEST_MEDIA_FILE_ID}, "junk", {"file_id": ""}],
+                    "456": [{"file_id": "ok"}],
+                    "789": [],
+                    "999": "not-a-list",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pending = load_pending_media(state_file)
+
+    assert pending[str(TEST_MEDIA_CHAT_ID)][0]["message_id"] == 0
+    assert pending[str(TEST_MEDIA_CHAT_ID)][0]["mime_type"] is None
+    assert list(pending) == ["123", "456"]
+
+
+def test_load_pending_media_handles_non_dict_section(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"pending_media": []}', encoding="utf-8")
+
+    assert load_pending_media(state_file) == {}
+
+
+@pytest.mark.parametrize(
+    "saver",
+    [
+        lambda path: save_session_chat_map(path, {"s1": TEST_MEDIA_CHAT_ID}),
+        lambda path: save_last_session_id(path, "s1"),
+        lambda path: save_prompt_message_id(path, "s1", PROMPT_MESSAGE_ID),
+    ],
+    ids=["sessions", "last_session", "prompt_message"],
+)
+def test_state_savers_preserve_queued_media(tmp_path: Path, saver):
+    state_file = tmp_path / "state.json"
+    queue_media(state_file)
+
+    saver(state_file)
+
+    assert list(load_pending_media(state_file)) == [str(TEST_MEDIA_CHAT_ID)]

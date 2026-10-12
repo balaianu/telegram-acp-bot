@@ -16,10 +16,15 @@ from telegram_acp_bot.mcp.state import (
 )
 from telegram_acp_bot.mcp.tools.attachments import (
     ALLOW_PATH_ENV,
+    DEFAULT_MEDIA_DIRNAME,
+    MEDIA_OUTSIDE_WORKSPACE_ERROR,
     AttachmentPayload,
     allow_path_inputs,
+    default_media_name,
     load_attachment_bytes,
     register_attachment_tools,
+    resolve_media_target,
+    telegram_fetch_attachment,
     telegram_send_attachment,
 )
 from telegram_acp_bot.mcp.tools.reactions import (
@@ -48,6 +53,8 @@ _load_attachment_bytes = load_attachment_bytes
 
 __all__ = [
     "ALLOW_PATH_ENV",
+    "DEFAULT_MEDIA_DIRNAME",
+    "MEDIA_OUTSIDE_WORKSPACE_ERROR",
     "MISSING_SCHEDULED_DB_ERROR",
     "MIXED_RUN_AT_AND_DELAY_ERROR",
     "NEGATIVE_DELAY_ERROR",
@@ -63,6 +70,7 @@ __all__ = [
     "_resolve_request_context",
     "allow_path_inputs",
     "datetime",
+    "default_media_name",
     "format_scheduled_summary",
     "load_last_session_id",
     "load_prompt_message_id",
@@ -74,9 +82,11 @@ __all__ = [
     "register_attachment_tools",
     "register_reaction_tools",
     "register_scheduling_tools",
+    "resolve_media_target",
     "resolve_run_at",
     "schedule_task",
     "telegram_channel_info",
+    "telegram_fetch_attachment",
     "telegram_send_attachment",
     "telegram_set_message_reaction",
     "timedelta",
@@ -99,6 +109,7 @@ mcp = FastMCP(
 def telegram_channel_info() -> dict[str, object]:
     return {
         "supports_attachment_delivery": True,
+        "supports_media_fetching": True,
         "supports_message_reactions": True,
         "supported_reaction_emojis": STANDARD_REACTION_EMOJI_LIST,
         "supports_scheduled_tasks": True,

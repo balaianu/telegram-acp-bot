@@ -347,6 +347,31 @@ def test_main_activity_mode_short_alias_sets_flag(mocker):
     assert config.activity_mode == "verbose"
 
 
+def test_main_group_media_queue_flag_sets_config(mocker):
+    """--group-media-queue turns the lazy group media queue on."""
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--group-media-queue"]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.group_media_queue is True
+
+
+def test_main_group_media_queue_env_var_sets_config(mocker, monkeypatch):
+    """ACP_TELEGRAM_GROUP_MEDIA_QUEUE=1 enables the queue without a CLI flag."""
+    monkeypatch.setenv("ACP_TELEGRAM_GROUP_MEDIA_QUEUE", "1")
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.group_media_queue is True
+
+
+def test_main_group_media_queue_defaults_to_off(mocker):
+    """Group media is dropped rather than queued unless the operator opts in."""
+    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
+    config = mock_run_polling.call_args.args[0]
+    assert config.group_media_queue is False
+
+
 # Config file tests
 
 

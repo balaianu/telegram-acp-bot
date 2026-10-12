@@ -111,6 +111,17 @@ class AgentService(Protocol):
 
     async def clear(self, *, chat_id: int) -> bool: ...
 
+    async def record_pending_media(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        file_id: str,
+        mime_type: str | None,
+    ) -> None: ...
+
+    async def take_pending_media(self, *, chat_id: int) -> tuple[dict[str, object], ...]: ...
+
     def get_permission_policy(self, *, chat_id: int) -> PermissionPolicy | None: ...
 
     async def set_session_permission_mode(self, *, chat_id: int, mode: PermissionMode) -> bool: ...

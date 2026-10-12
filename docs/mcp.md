@@ -25,11 +25,13 @@ ACP remains responsible for the conversational session with the agent. MCP is th
 
 ## What The Tools Enable
 
-The built-in server currently exposes four tools.
+The built-in server currently exposes five tools.
 
 `telegram_channel_info` is a lightweight capability probe. It lets the agent confirm what this Telegram channel integration can currently do.
 
 `telegram_send_attachment` lets the agent deliver a file or image to the current Telegram chat. This is the tool behind flows like “send me the generated screenshot” or “upload the review artifact”.
+
+`telegram_fetch_attachment` lets the agent download media that Telegram announced as pending, by `file_id`, into its own workspace. This is the counterpart of the lazy inbound path described in {term}`ACP_TELEGRAM_GROUP_MEDIA_QUEUE`.
 
 `telegram_set_message_reaction` lets the agent add a standard Telegram emoji reaction to a message in the current chat. This is the tool behind lightweight moments such as “acknowledge that briefly” or “react instead of sending a noisy one-line reply”.
 
@@ -91,6 +93,20 @@ telegram_send_attachment(
 ```
 
 If the MIME type resolves to `image/*`, the server sends a Telegram photo. Otherwise it sends a document. In most deployments, `data_base64` is the safer default. The `path` input is intentionally disabled unless {term}`ACP_TELEGRAM_CHANNEL_ALLOW_PATH` is enabled.
+
+(mcp-feature-fetching)=
+## Fetch Pending Media
+
+Group chats are the case where this matters most. With {term}`ACP_TELEGRAM_GROUP_MEDIA_QUEUE` enabled, a group message that the {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION` gate ignores is not dropped: only its Telegram `file_id` is queued, and the next prompt the bot does answer starts with a notice listing the parked references. Nothing is downloaded, so bytes never sit in the bot's memory or in the agent's context until the agent decides they are worth reading:
+
+```text
+telegram_fetch_attachment(
+  file_id="AgAC...=",
+  mime_type="image/jpeg"
+)
+```
+
+The download lands inside the agent workspace, by default under `.telegram-media/`, and the result reports the local `path`. Pass `dest` to choose a meaningful name such as `invoices/hoa-don.pdf`; a `dest` that resolves outside the workspace is rejected. Queued references are announced once and capped per chat, so a long run of unmentioned photos cannot grow the state file without bound.
 
 (mcp-feature-reactions)=
 ## React To Messages

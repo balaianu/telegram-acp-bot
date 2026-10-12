@@ -19,6 +19,7 @@ class BotConfig:
     activity_mode: ActivityMode = "normal"
     schedule_languages: tuple[str, ...] = ("en", "es")
     group_require_mention: bool = False
+    group_media_queue: bool = False
 
     @property
     def compact_activity(self) -> bool:
@@ -35,6 +36,7 @@ def make_config(  # noqa: PLR0913
     compact_activity: bool | None = None,
     schedule_languages: list[str] | None = None,
     group_require_mention: bool = False,
+    group_media_queue: bool = False,
 ) -> BotConfig:
     normalized_usernames = {
         username.lstrip("@").strip().lower() for username in (allowed_usernames or []) if username.strip()
@@ -52,4 +54,5 @@ def make_config(  # noqa: PLR0913
         activity_mode=activity_mode,
         schedule_languages=normalized_schedule_languages,
         group_require_mention=group_require_mention,
+        group_media_queue=group_media_queue,
     )

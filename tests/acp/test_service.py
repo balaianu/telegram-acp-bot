@@ -314,6 +314,27 @@ async def test_set_prompt_message_context_without_state_file_is_noop():
     await service.set_prompt_message_context(session_id="ignored", message_id=PROMPT_MESSAGE_ID)
 
 
+async def test_record_pending_media_then_take_it(tmp_path: Path):
+    state_file = tmp_path / "channel-state.json"
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], channel_state_file=state_file)
+
+    await service.record_pending_media(chat_id=9, message_id=PROMPT_MESSAGE_ID, file_id="f1", mime_type="image/jpeg")
+    refs = await service.take_pending_media(chat_id=9)
+
+    assert [ref["file_id"] for ref in refs] == ["f1"]
+    assert refs[0]["message_id"] == PROMPT_MESSAGE_ID
+    assert load_pending_media(state_file) == {}
+
+
+async def test_pending_media_helpers_without_state_file_are_noop(tmp_path: Path):
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[])
+
+    await service.record_pending_media(chat_id=9, message_id=1, file_id="f1", mime_type=None)
+
+    assert await service.take_pending_media(chat_id=9) == ()
+    assert not (tmp_path / "channel-state.json").exists()
+
+
 async def test_load_session_rejects_when_capability_is_false(tmp_path: Path):
     process = FakeProcess()
     connection = FakeConnection(supports_load_session=False)
