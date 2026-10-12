@@ -80,7 +80,9 @@ The bot entrypoint is `telegram-acp-bot`.
   streaming edits.
   In `compact`, the bot keeps a single in-progress reply message per prompt,
   updates that message in place, and keeps the normal activity emoji in the
-  message text while work is in progress.
+  message text while work is in progress. The status line also names the action
+  in progress (the command being run, or the file being touched relative to the
+  workspace), on one row.
   In `verbose`, the bot streams append-only updates in place for active reply
   text and tool activity, then finalizes the same message when possible.
 

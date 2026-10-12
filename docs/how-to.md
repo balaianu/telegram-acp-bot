@@ -107,7 +107,7 @@ Set the mode explicitly:
 The available modes are:
 
 - `normal`: separate activity messages, no streaming edits.
-- `compact`: one in-progress status message that becomes the final answer.
+- `compact`: one in-progress status message that names the current action and becomes the final answer.
 - `verbose`: in-place append-only streaming for reply text and active tool output.
 
 (how-to-busy-queue)=

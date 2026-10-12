@@ -88,7 +88,7 @@ class _NormalActivityModeHandler(_ActivityModeHandler):
 
 
 class _CompactActivityModeHandler(_ActivityModeHandler):
-    """Single in-place status message during prompt execution."""
+    """Single in-place status message during prompt execution, naming the current action."""
 
     async def on_permission_request(
         self,
@@ -131,10 +131,12 @@ class _CompactActivityModeHandler(_ActivityModeHandler):
         if app is None or block.kind == "reply":
             return
         label = self._bridge._activity_label(block)
+        hint = self._bridge._compact_status_hint(block, workspace=self._bridge._activity_workspace(chat_id=chat_id))
+        base_text = f"{label}: {hint}" if hint else label
         lock = self._bridge._compact_status_locks.setdefault(chat_id, asyncio.Lock())
         async with lock:
-            self._bridge._compact_status_label[chat_id] = label
-            status_text = f"{label}."
+            self._bridge._compact_status_label[chat_id] = base_text
+            status_text = f"{base_text}."
             existing_msg_id = self._bridge._compact_status_msg_id.get(chat_id)
             if existing_msg_id is None:
                 with suppress(TelegramError):

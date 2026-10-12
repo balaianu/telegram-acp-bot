@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from tests.telegram.support import *
 
+from telegram_acp_bot.telegram.constants import COMPACT_STATUS_HINT_CHARS
+
 SECOND_REPLY_MESSAGE_ID = 2
 
 
@@ -43,7 +45,74 @@ async def test_compact_on_activity_event_edits_existing_status_message():
     assert len(bot.sent_messages) == 0
     assert len(bot.edited_messages) == 1
     assert bot.edited_messages[0]["message_id"] == COMPACT_STATUS_MSG_ID
-    assert cast(str, bot.edited_messages[0]["text"]) == "⚙️ Running."
+    assert cast(str, bot.edited_messages[0]["text"]) == "⚙️ Running: ls."
+
+
+async def test_compact_status_hint_names_the_command_of_a_multiline_block():
+    """Fenced multi-line commands collapse onto one status row."""
+    block = AgentActivityBlock(
+        kind="execute",
+        title="Run cd /tmp && python3 scripts/thuchi.py add --tien 75000",
+        status="in_progress",
+        text="",
+    )
+
+    hint = TelegramBridge._compact_status_hint(block, workspace=Path("."))
+
+    assert "\n" not in hint
+    assert "cd /tmp" in hint
+
+
+async def test_compact_status_hint_truncates_a_long_title():
+    block = AgentActivityBlock(kind="read", title="Read " + "x" * 200, status="in_progress", text="")
+
+    hint = TelegramBridge._compact_status_hint(block, workspace=Path("."))
+
+    assert len(hint) <= COMPACT_STATUS_HINT_CHARS
+    assert hint.endswith("…")
+
+
+async def test_compact_status_hint_is_empty_when_the_block_has_no_title_row():
+    think = AgentActivityBlock(kind="think", title="Long internal reasoning", status="in_progress", text="")
+    blank = AgentActivityBlock(kind="execute", title="", status="in_progress", text="")
+
+    assert TelegramBridge._compact_status_hint(think, workspace=None) == ""
+    assert TelegramBridge._compact_status_hint(blank, workspace=None) == ""
+
+
+async def test_compact_status_hint_keeps_paths_outside_the_workspace_absolute():
+    outside = AgentActivityBlock(kind="edit", title="Edit /etc/hosts", status="in_progress", text="")
+    without_workspace = AgentActivityBlock(kind="read", title="Read /var/log/sys", status="in_progress", text="")
+
+    assert TelegramBridge._compact_status_hint(outside, workspace=Path(".")) == "/etc/hosts"
+    assert TelegramBridge._compact_status_hint(without_workspace, workspace=None) == "/var/log/sys"
+
+
+async def test_compact_status_message_shows_the_hint_and_keeps_it_while_animating(mocker):
+    """The rotating-dots task re-renders the whole line, so the action stays visible."""
+    bridge = make_compact_bridge()
+    bot = DummyBot()
+    bridge._app = cast(Application, SimpleNamespace(bot=bot))
+    block = AgentActivityBlock(kind="edit", title="Edit src/app.py", status="in_progress", text="")
+
+    await bridge.on_activity_event(TEST_CHAT_ID, block)
+
+    assert bridge._compact_status_label[TEST_CHAT_ID] == "✏️ Editing: src/app.py"
+
+    steps = 0
+    stop_after_steps = 2
+
+    async def fake_sleep(_: float) -> None:
+        nonlocal steps
+        steps += 1
+        if steps >= stop_after_steps:
+            bridge._compact_status_label.pop(TEST_CHAT_ID, None)
+
+    mocker.patch("telegram_acp_bot.telegram.bridge.asyncio.sleep", side_effect=fake_sleep)
+    await bridge._animate_compact_status(chat_id=TEST_CHAT_ID, message_id=1)
+
+    edited = [cast(str, m["text"]) for m in bot.edited_messages]
+    assert edited[0] == "✏️ Editing: src/app.py.."
 
 
 async def test_compact_on_activity_event_send_failure_is_silent():

@@ -74,6 +74,7 @@ from telegram_acp_bot.telegram.constants import (
     BUSY_QUEUED_TEXT,
     BUSY_SENT_TEXT,
     BUSY_STILL_QUEUED_TEXT,
+    COMPACT_STATUS_HINT_CHARS,
     KIND_LABELS,
     MAX_RESTART_ARGS,
     MAX_RESUME_ARGS,
@@ -1078,16 +1079,16 @@ class TelegramBridge:
         dot_count = 1
         while True:
             await asyncio.sleep(0.6)
-            label = self._compact_status_label.get(chat_id)
+            base_text = self._compact_status_label.get(chat_id)
             current_msg_id = self._compact_status_msg_id.get(chat_id)
-            if label is None or current_msg_id != message_id:
+            if base_text is None or current_msg_id != message_id:
                 return
             dot_count = dot_count % 3 + 1
             with suppress(TelegramError):
                 await app.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=f"{label}{'.' * dot_count}",
+                    text=f"{base_text}{'.' * dot_count}",
                 )
 
     async def _start_implicit_session(self, *, update: Update, chat_id: int) -> bool:
@@ -1776,6 +1777,29 @@ class TelegramBridge:
         if TelegramBridge._search_source(block) == "web":
             return SEARCH_LABEL_WEB
         return SEARCH_LABEL_NEUTRAL
+
+    @staticmethod
+    def _compact_status_hint(block: AgentActivityBlock, *, workspace: Path | None) -> str:
+        """Return a one-line summary of an activity for the compact status message.
+
+        The normalized title is often multi-line (fenced commands, absolute paths); the status
+        line only has room for its first meaningful row, so collapse it, show paths relative to
+        the workspace, and cap the width.
+        """
+
+        title = TelegramBridge._normalize_activity_title(block, workspace=workspace)
+        for raw_line in title.splitlines():
+            line = raw_line.strip().strip("`").strip()
+            if not line:
+                continue
+            if workspace is not None and line.startswith("/"):
+                root = str(Path(workspace).resolve(strict=False)).rstrip("/")
+                if root and line.startswith(f"{root}/"):
+                    line = line[len(root) + 1 :]
+            if len(line) <= COMPACT_STATUS_HINT_CHARS:
+                return line
+            return f"{line[: COMPACT_STATUS_HINT_CHARS - 1].rstrip()}…"
+        return ""
 
     @staticmethod
     def _search_source(block: AgentActivityBlock) -> str | None:
