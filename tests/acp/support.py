@@ -213,6 +213,27 @@ class CommandsConnection(FakeConnection):
         return session
 
 
+class ReadvertiseCommandsConnection(CommandsConnection):
+    """Fake agent that publishes a different command list after each prompt."""
+
+    async def prompt(self, *, session_id: str, prompt: list) -> SimpleNamespace:
+        result = await super().prompt(session_id=session_id, prompt=prompt)
+        assert self.client is not None
+        await self.client.session_update(
+            session_id=session_id,
+            update=update_available_commands(
+                [
+                    AvailableCommand(
+                        name=f"extra-{len(self.prompt_calls)}",
+                        description=f"Command added on prompt {len(self.prompt_calls)}",
+                        input={"hint": "<target>"},
+                    )
+                ]
+            ),
+        )
+        return result
+
+
 class OversizeLineConnection(FakeConnection):
     async def prompt(self, *, session_id: str, prompt: list) -> SimpleNamespace:
         del session_id, prompt
@@ -287,6 +308,7 @@ __all__ = [
     "PermissionOption",
     "PromptFile",
     "PromptImage",
+    "ReadvertiseCommandsConnection",
     "RequestError",
     "RequestPermissionResponse",
     "ResourceContentBlock",

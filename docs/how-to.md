@@ -287,7 +287,8 @@ Three limits to know about:
 
 A command the agent did not advertise is rejected instead of forwarded, so a typo never reaches the agent as prompt
 text, and a button left over from an older keyboard reports that the command is no longer advertised rather than running
-it. Commands that need an interactive terminal answer that themselves, for example
+it. Every advertisement replaces the previous one, so an agent that gains commands mid-session shows them the next time
+you ask for `/cmds`. Commands that need an interactive terminal answer that themselves, for example
 `Command /help requires interactive UI and is not available in ACP.`
 
 ## Notes

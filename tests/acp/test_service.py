@@ -1534,6 +1534,29 @@ async def test_available_commands_update_is_captured_and_exposed_per_chat(tmp_pa
     assert service.get_available_commands(chat_id=8) is None
 
 
+async def test_available_commands_are_replaced_by_the_latest_advertisement(tmp_path: Path):
+    service = _commands_service(ReadvertiseCommandsConnection(session_id="cmds-session"))
+    await service.new_session(chat_id=7, workspace=tmp_path)
+
+    commands = service.get_available_commands(chat_id=7)
+    assert commands is not None
+    assert [command.name for command in commands] == ["goal", "deep-research"]
+
+    await service.prompt(chat_id=7, text="hello")
+
+    commands = service.get_available_commands(chat_id=7)
+    assert commands is not None
+    assert [(command.name, command.description, command.hint) for command in commands] == [
+        ("extra-1", "Command added on prompt 1", "<target>"),
+    ]
+
+    await service.prompt(chat_id=7, text="hello again")
+
+    commands = service.get_available_commands(chat_id=7)
+    assert commands is not None
+    assert [command.name for command in commands] == ["extra-2"]
+
+
 async def test_available_commands_are_cleared_when_the_session_stops(tmp_path: Path):
     service = _commands_service(CommandsConnection(session_id="cmds-session"))
     await service.new_session(chat_id=7, workspace=tmp_path)

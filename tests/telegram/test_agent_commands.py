@@ -173,6 +173,28 @@ async def test_tapping_a_command_the_agent_stopped_advertising_is_not_forwarded(
     assert service.prompts == []
 
 
+async def test_a_re_advertised_command_list_replaces_the_keyboard_and_the_gate():
+    bridge, service = make_commands_bridge((GOAL_COMMAND,))
+    service.commands = (RESEARCH_COMMAND,)
+
+    update = make_update(with_message=True)
+    await bridge.cmds(update, make_context())
+
+    assert update.message is not None
+    buttons = [button for row in _keyboard_rows(update.message) for button in row]
+    assert [button.text for button in buttons] == ["/deep-research", AGENT_COMMAND_KEYBOARD_INFO_LABEL]
+
+    typed = make_update(text="/goal status")
+    await bridge.on_agent_command(typed, make_context())
+    assert typed.message is not None
+    assert "/goal is not a command this agent advertises. See /cmds." in typed.message.replies[0]
+
+    tap_update, query, _ = make_callback_update("cmd|goal")
+    await bridge.on_agent_command_callback(tap_update, make_context())
+    assert "no longer advertises" in query.answers[-1]
+    assert service.prompts == []
+
+
 async def test_tapping_a_button_from_another_keyboard_is_an_invalid_action():
     bridge, service = make_commands_bridge((GOAL_COMMAND,))
 
