@@ -93,6 +93,7 @@ from telegram_acp_bot.telegram.constants import (
     ELICITATION_FORMS_MAX,
     ELICITATION_KEYBOARD_COLUMNS,
     ELICITATION_OPTION_LABEL_CHARS,
+    ELICITATION_REMOVED_KEYBOARD,
     ELICITATION_SELECTED_PREFIX,
     ELICITATION_SKIP_LABEL,
     ELICITATION_SKIP_TOKEN,
@@ -820,10 +821,18 @@ class TelegramBridge:
             return
         await self._resolve_elicitation(form, answers=answers, query=query, toast="Answer sent.")
 
-    async def _replace_elicitation_markup(self, query: CallbackQuery, markup: InlineKeyboardMarkup) -> None:
-        """Put a new keyboard on the question message; a tap that changed nothing is not a failure."""
+    async def _replace_elicitation_markup(self, query: CallbackQuery, markup: InlineKeyboardMarkup | None) -> None:
+        """Put a new keyboard on the question message; a tap that changed nothing is not a failure.
+
+        Telegram removes an inline keyboard only when it is told to set an explicitly empty one: both an
+        omitted ``reply_markup`` and an empty ``InlineKeyboardMarkup`` (which serializes to ``{}``) mean
+        "change nothing" and come back as ``Message is not modified``.
+        """
         try:
-            await query.edit_message_reply_markup(reply_markup=markup)
+            if markup is None:
+                await query.edit_message_reply_markup(api_kwargs=dict(ELICITATION_REMOVED_KEYBOARD))
+            else:
+                await query.edit_message_reply_markup(reply_markup=markup)
         except BadRequest as exc:
             if TELEGRAM_UNCHANGED_MESSAGE_ERROR not in str(exc).lower():
                 raise
@@ -945,7 +954,7 @@ class TelegramBridge:
             await query.answer("This question is no longer waiting for an answer.")
             return
         await query.answer(toast)
-        await self._replace_elicitation_markup(query, InlineKeyboardMarkup(()))
+        await self._replace_elicitation_markup(query, None)
 
     async def on_permission_request(self, request: PermissionRequest) -> None:
         if self._app is None:

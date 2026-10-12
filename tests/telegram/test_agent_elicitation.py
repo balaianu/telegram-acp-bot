@@ -37,10 +37,18 @@ class TapQuery:
     async def answer(self, text: str | None = None) -> None:
         self.answers.append(text or "")
 
-    async def edit_message_reply_markup(self, *, reply_markup: object | None = None) -> None:
+    async def edit_message_reply_markup(
+        self,
+        *,
+        reply_markup: object | None = None,
+        api_kwargs: dict[str, object] | None = None,
+    ) -> None:
         if self.edit_error is not None:
             raise self.edit_error
-        self.markups.append(reply_markup)
+        # Telegram only sees the merged payload, so api_kwargs wins over an omitted reply_markup.
+        payload: dict[str, object] = {"reply_markup": reply_markup}
+        payload.update(api_kwargs or {})
+        self.markups.append(payload["reply_markup"])
 
 
 class ElicitationService(ImplicitSessionServiceBase):
@@ -145,9 +153,9 @@ def _keyboard(bot: DummyBot) -> InlineKeyboardMarkup:
 
 
 def _cleared(query: TapQuery) -> bool:
-    """Telegram only removes a keyboard when an empty one is sent; omitting it leaves the old keys up."""
-    markup = query.markups[-1]
-    return isinstance(markup, InlineKeyboardMarkup) and markup.inline_keyboard == ()
+    """Telegram removes a keyboard only from a raw empty inline_keyboard: omitting it or sending an empty
+    InlineKeyboardMarkup (which serializes to ``{}``) both mean "change nothing"."""
+    return query.markups[-1] == {"inline_keyboard": []}
 
 
 def _buttons(markup: InlineKeyboardMarkup) -> list[InlineKeyboardButton]:

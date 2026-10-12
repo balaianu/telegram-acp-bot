@@ -76,3 +76,6 @@ ELICITATION_SKIP_TOKEN = "x"
 ELICITATION_SKIP_LABEL = "⏭️ Skip this question"
 ELICITATION_SUBMIT_TOKEN = "s"
 ELICITATION_SUBMIT_LABEL = "✅ Send my answer"
+# Telegram clears an inline keyboard only when an explicitly empty one is set, and PTB serializes an
+# empty InlineKeyboardMarkup to {}, which it reads as "change nothing".
+ELICITATION_REMOVED_KEYBOARD: dict[str, object] = {"reply_markup": {"inline_keyboard": []}}
