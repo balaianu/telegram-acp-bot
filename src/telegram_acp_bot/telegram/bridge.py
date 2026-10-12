@@ -764,7 +764,7 @@ class TelegramBridge:
         if self._app is None:
             return
 
-        self._remember_elicitation_form(request)
+        await self._remember_elicitation_form(request)
         sent = await self._send_markdown_to_chat(
             bot=self._app.bot,
             chat_id=request.chat_id,
@@ -871,12 +871,28 @@ class TelegramBridge:
                 raise
             logger.debug("Elicitation keyboard unchanged: %s", exc)
 
-    def _remember_elicitation_form(self, request: ElicitationRequest) -> None:
-        """Keep the offered form so a later tap can re-render the same keyboard."""
+    async def _remember_elicitation_form(self, request: ElicitationRequest) -> None:
+        """Keep the offered form so a later tap can re-render the same keyboard.
+
+        Shrinking the list is not only a memory decision. The service waits on every question it
+        asked, so a form dropped silently would leave its buttons on screen and hold the agent open
+        for the whole timeout while the bridge denied knowing about it.
+        """
         self._elicitation_forms[request.request_id] = request
         self._elicitation_selections[request.request_id] = {}
-        for request_id in list(self._elicitation_forms)[:-ELICITATION_FORMS_MAX]:
-            self._forget_elicitation(request_id)
+        for evicted in list(self._elicitation_forms.values())[:-ELICITATION_FORMS_MAX]:
+            await self._retire_elicitation(evicted)
+
+    async def _retire_elicitation(self, request: ElicitationRequest) -> None:
+        """Close a question the bounded form list is dropping, so no keyboard outlives its answer."""
+        with bind_log_context(chat_id=request.chat_id):
+            logger.info("Elicitation dropped from the form list: request_id=%s", request.request_id)
+        await self._agent_service.respond_elicitation_request(
+            chat_id=request.chat_id,
+            request_id=request.request_id,
+            answers=None,
+        )
+        await self.on_elicitation_expired(request.chat_id, request.request_id)
 
     def _forget_elicitation(self, request_id: str) -> None:
         self._elicitation_forms.pop(request_id, None)

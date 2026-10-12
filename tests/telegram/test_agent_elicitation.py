@@ -431,17 +431,37 @@ async def test_an_answer_the_service_cannot_take_leaves_the_keyboard_up():
 
 
 async def test_only_the_most_recent_forms_keep_their_keyboards_alive():
-    bridge, _ = make_elicitation_bridge()
+    bridge, service = make_elicitation_bridge()
     offered = [_request(request_id=f"id{index}") for index in range(ELICITATION_FORMS_MAX + 2)]
     for request in offered:
         await bridge.on_elicitation_request(request)
 
     assert list(bridge._elicitation_forms) == [request.request_id for request in offered[-ELICITATION_FORMS_MAX:]]
     assert len(bridge._elicitation_selections) == ELICITATION_FORMS_MAX
+    assert len(service.resolved) == len(offered) - ELICITATION_FORMS_MAX
 
     stale, stale_query = _tap(offered[0].request_id, "0.0")
     await bridge.on_elicitation_callback(stale, make_context())
     assert stale_query.answers == ["This question is no longer waiting for an answer."]
+
+
+async def test_a_question_dropped_from_the_form_list_is_declined_and_loses_its_keyboard():
+    bridge, service = make_elicitation_bridge()
+    offered = [_request(request_id=f"id{index}") for index in range(ELICITATION_FORMS_MAX + 2)]
+    message_ids: dict[str, int | None] = {}
+    for request in offered:
+        await bridge.on_elicitation_request(request)
+        message_ids[request.request_id] = bridge._elicitation_messages[request.request_id]
+
+    dropped = offered[:2]
+    assert service.resolved == [(TEST_CHAT_ID, request.request_id, None) for request in dropped]
+    edits = _bot(bridge).edited_reply_markups
+    assert [edit["message_id"] for edit in edits] == [message_ids[request.request_id] for request in dropped]
+    assert all(edit["api_kwargs"] == {"reply_markup": {"inline_keyboard": []}} for edit in edits)
+    for request in dropped:
+        assert request.request_id not in bridge._elicitation_forms
+        assert request.request_id not in bridge._elicitation_messages
+        assert request.request_id not in bridge._elicitation_selections
 
 
 async def test_a_denied_tap_answers_over_its_own_button():

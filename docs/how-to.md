@@ -324,7 +324,9 @@ Three limits to know about:
 - Only fields the agent offered as a choice of known options become buttons. A field you would have to type into, or an
   elicitation that is not a form, is declined so the agent falls back to asking in plain text.
 - The question waits five minutes for a tap and is then cancelled, and the last `ELICITATION_FORMS_MAX` forms are
-  remembered: a button from an older keyboard, or one whose question the agent already stopped waiting for, answers with
+  remembered. When a new question pushes an older one out of that list, the older question is declined so the agent stops
+  waiting for it and its buttons are taken off the message — a keyboard never outlives the answer it is asking for.
+  A button from an older keyboard, or one whose question the agent already stopped waiting for, answers with
   a toast instead of being sent twice.
 - A button shows at most `ELICITATION_OPTION_LABEL_CHARS` characters of the option and ends in `…` when the agent offered
   a longer one, so a cut label is never mistaken for a complete answer. The question line above still shows what the
