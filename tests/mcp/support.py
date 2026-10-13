@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, agent_state_dir, env_suffix
 from telegram_acp_bot.mcp import server as mcp_channel
 from telegram_acp_bot.mcp import state as channel_state_module
 from telegram_acp_bot.mcp.state import (
     MAX_PENDING_MEDIA_PER_CHAT,
+    PER_AGENT_STATE_FILE_NAME,
     STATE_FILE_ENV,
     TOKEN_ENV,
     append_pending_media,
@@ -28,7 +30,9 @@ TEST_QUEUED_AT = "2026-03-30T09:00:00+00:00"
 
 __all__ = [
     "ACP_SCHEDULED_TASKS_DB_ENV",
+    "DEFAULT_AGENT_NAME",
     "MAX_PENDING_MEDIA_PER_CHAT",
+    "PER_AGENT_STATE_FILE_NAME",
     "STATE_FILE_ENV",
     "STATE_FILE_PRIVATE_MODE",
     "TEST_MEDIA_CHAT_ID",
@@ -38,9 +42,11 @@ __all__ = [
     "TEST_SCHEDULED_CHAT_ID",
     "TOKEN_ENV",
     "ScheduledTaskStore",
+    "agent_state_dir",
     "append_pending_media",
     "channel_state_module",
     "default_state_file",
+    "env_suffix",
     "load_last_session_id",
     "load_pending_media",
     "load_prompt_message_id",

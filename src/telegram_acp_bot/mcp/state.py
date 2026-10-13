@@ -7,10 +7,13 @@ import os
 from pathlib import Path
 from tempfile import gettempdir, mkstemp
 
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, agent_state_dir, env_suffix
+
 STATE_FILE_ENV = "ACP_TELEGRAM_CHANNEL_STATE_FILE"
 TOKEN_ENV = "ACP_TELEGRAM_BOT_TOKEN"
 STATE_FILE_MODE = 0o600
 MAX_PENDING_MEDIA_PER_CHAT = 20
+PER_AGENT_STATE_FILE_NAME = "channel-state.json"
 
 
 def default_state_file(*, pid: int) -> Path:
@@ -19,17 +22,27 @@ def default_state_file(*, pid: int) -> Path:
     return Path(gettempdir()) / f"telegram-acp-bot-mcp-state-{pid}.json"
 
 
-def resolve_state_file(*, pid: int) -> Path:
-    """Return the state file for this process, honouring an explicit override.
+def resolve_state_file(*, name: str | None = None, pid: int) -> Path:
+    """Return the state file of one agent, honouring an explicit override.
 
-    `ACP_TELEGRAM_CHANNEL_STATE_FILE` lets an operator pin the path so routing state
-    and queued media survive a restart. Without it the file is scoped to the pid, which
-    keeps concurrent runs isolated but discards everything it holds when the process exits.
+    A named agent is pinned by `ACP_TELEGRAM_CHANNEL_STATE_FILE_<NAME>`, then falls
+    back to a directory per agent so two bots in one process never route through the
+    same file. The unprefixed `ACP_TELEGRAM_CHANNEL_STATE_FILE` only applies to the
+    implicit `default` agent, which keeps an existing single-agent deployment on its
+    current path. With no name at all the file stays scoped to the pid, which
+    keeps concurrent runs isolated but discards everything it holds on exit.
     """
 
-    configured = os.getenv(STATE_FILE_ENV, "").strip()
-    if configured:
-        return Path(configured).expanduser()
+    if name is not None:
+        pinned = os.getenv(f"{STATE_FILE_ENV}_{env_suffix(name)}", "").strip()
+        if pinned:
+            return Path(pinned).expanduser()
+    if name in (None, DEFAULT_AGENT_NAME):
+        configured = os.getenv(STATE_FILE_ENV, "").strip()
+        if configured:
+            return Path(configured).expanduser()
+    if name is not None:
+        return agent_state_dir(name) / PER_AGENT_STATE_FILE_NAME
     return default_state_file(pid=pid)
 
 

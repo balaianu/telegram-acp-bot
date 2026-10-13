@@ -11,7 +11,7 @@ from typing import Any, Protocol, cast
 from rich.logging import RichHandler
 from rich.markup import escape
 
-_CONTEXT_FIELDS = ("chat_id", "session_id", "prompt_cycle_id")
+_CONTEXT_FIELDS = ("agent", "chat_id", "session_id", "prompt_cycle_id")
 _MISSING = "-"
 LOG_TEXT_PREVIEW_MAX_CHARS = 160
 _log_context: ContextVar[dict[str, str] | None] = ContextVar("telegram_acp_log_context", default=None)
@@ -139,6 +139,10 @@ class _RichTextFormatter(logging.Formatter):
         logger_label = _logger_label(record.name)
         parts = [f"[bold bright_cyan]{logger_label}[/]"]
 
+        agent = getattr(record, "agent", _MISSING)
+        if agent != _MISSING:
+            parts.append(f"[bright_blue]agent[/]=[white]{escape(str(agent))}[/]")
+
         chat_id = getattr(record, "chat_id", _MISSING)
         if chat_id != _MISSING:
             parts.append(f"[cyan]chat[/]=[white]{escape(str(chat_id))}[/]")
@@ -163,6 +167,7 @@ class _JsonLogFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "agent": getattr(record, "agent", _MISSING),
             "chat_id": getattr(record, "chat_id", _MISSING),
             "session_id": getattr(record, "session_id", _MISSING),
             "prompt_cycle_id": getattr(record, "prompt_cycle_id", _MISSING),

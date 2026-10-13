@@ -882,6 +882,16 @@ async def test_default_scheduled_tasks_db_path_uses_xdg_state_home(monkeypatch: 
     assert default_scheduled_tasks_db_path() == tmp_path / "telegram-acp-bot" / "scheduled-tasks.sqlite3"
 
 
+async def test_default_scheduled_tasks_db_path_is_per_agent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Two schedulers over one database would both claim the same due row."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    assert default_scheduled_tasks_db_path(name="qoder") != default_scheduled_tasks_db_path()
+    assert default_scheduled_tasks_db_path(name="qoder") == (
+        tmp_path / "telegram-acp-bot" / "agents" / "qoder" / "scheduled-tasks.sqlite3"
+    )
+
+
 async def test_format_utc_timestamp_rejects_naive_datetime():
     with pytest.raises(ValueError, match="timezone-aware"):
         format_utc_timestamp(datetime.now())

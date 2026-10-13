@@ -10,16 +10,20 @@ from tempfile import gettempdir
 import pytest
 
 from tests.mcp.support import (
+    DEFAULT_AGENT_NAME,
     MAX_PENDING_MEDIA_PER_CHAT,
+    PER_AGENT_STATE_FILE_NAME,
     STATE_FILE_ENV,
     STATE_FILE_PRIVATE_MODE,
     TEST_MEDIA_CHAT_ID,
     TEST_MEDIA_FILE_ID,
     TEST_MEDIA_MESSAGE_ID,
     TEST_QUEUED_AT,
+    agent_state_dir,
     append_pending_media,
     channel_state_module,
     default_state_file,
+    env_suffix,
     load_last_session_id,
     load_pending_media,
     load_prompt_message_id,
@@ -298,6 +302,39 @@ def test_resolve_state_file_without_env_is_scoped_to_the_pid(monkeypatch: pytest
     monkeypatch.delenv(STATE_FILE_ENV, raising=False)
 
     assert resolve_state_file(pid=TEST_PID) == Path(gettempdir()) / f"telegram-acp-bot-mcp-state-{TEST_PID}.json"
+
+
+def test_resolve_state_file_reads_a_per_agent_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    pinned = tmp_path / "qoder-state.json"
+    monkeypatch.setenv(f"{STATE_FILE_ENV}_{env_suffix('qoder')}", str(pinned))
+
+    assert resolve_state_file(name="qoder", pid=TEST_PID) == pinned
+
+
+def test_resolve_state_file_gives_a_named_agent_a_directory_of_its_own(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.delenv(STATE_FILE_ENV, raising=False)
+
+    assert resolve_state_file(name="qoder", pid=TEST_PID) == (agent_state_dir("qoder") / PER_AGENT_STATE_FILE_NAME)
+
+
+def test_resolve_state_file_keeps_a_named_agent_out_of_the_flat_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A deployment that pins one path for the single agent must not funnel a second agent into it."""
+    monkeypatch.setenv(STATE_FILE_ENV, str(tmp_path / "flat.json"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    assert resolve_state_file(name="qoder", pid=TEST_PID) != Path(str(tmp_path / "flat.json"))
+    assert resolve_state_file(name=DEFAULT_AGENT_NAME, pid=TEST_PID) == tmp_path / "flat.json"
+
+
+def test_resolve_state_file_expands_home_in_a_per_agent_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(f"{STATE_FILE_ENV}_{env_suffix('qoder')}", "~/.acp/qoder-state.json")
+
+    assert resolve_state_file(name="qoder", pid=TEST_PID) == home / ".acp" / "qoder-state.json"
 
 
 def test_configured_state_file_keeps_queued_media_for_a_new_process(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
