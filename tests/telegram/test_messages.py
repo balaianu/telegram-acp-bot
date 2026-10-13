@@ -2000,42 +2000,6 @@ async def test_build_application_installs_handlers():
     assert isinstance(app.bot.rate_limiter, AIORateLimiter)
 
 
-async def test_run_polling(monkeypatch):
-    calls: list[object] = []
-
-    class DummyApp:
-        def run_polling(self, *, allowed_updates):
-            calls.append(allowed_updates)
-
-    def fake_build_application(config, bridge):
-        del config, bridge
-        return DummyApp()
-
-    monkeypatch.setattr(app_module, "build_application", fake_build_application)
-
-    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".")
-    bridge = make_bridge()
-    assert run_polling(config, bridge) == 0
-    assert len(calls) == 1
-
-
-async def test_run_polling_returns_restart_exit_code(monkeypatch):
-    class DummyApp:
-        def run_polling(self, *, allowed_updates):
-            del allowed_updates
-
-    def fake_build_application(config, bridge):
-        del config
-        bridge._restart_requested = True
-        return DummyApp()
-
-    monkeypatch.setattr(app_module, "build_application", fake_build_application)
-
-    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".")
-    bridge = make_bridge()
-    assert run_polling(config, bridge) == RESTART_EXIT_CODE
-
-
 # ---------------------------------------------------------------------------
 # Busy-state tests
 # ---------------------------------------------------------------------------

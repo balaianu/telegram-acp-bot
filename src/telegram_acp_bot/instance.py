@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from acp.schema import EnvVariable, HttpHeader, HttpMcpServer, McpServerStdio
+
 from telegram_acp_bot.acp.models import ActivityMode, PermissionEventOutput, PermissionMode
-from telegram_acp_bot.telegram.config import StatusReactionLevel
+from telegram_acp_bot.acp.service import AcpAgentService
+from telegram_acp_bot.core.session_registry import SessionRegistry
+from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.scheduled_tasks import (
+    ACP_SCHEDULED_TASKS_DB_ENV,
+    ScheduledTaskRunner,
+    ScheduledTaskScheduler,
+    ScheduledTaskStore,
+)
+from telegram_acp_bot.telegram.bridge import TelegramBridge
+from telegram_acp_bot.telegram.config import BotConfig, StatusReactionLevel, make_config
 
 
 @dataclass(slots=True, frozen=True)
@@ -37,3 +52,118 @@ class BotInstanceSpec:
     channel_state_file: Path
     scheduled_tasks_db: Path
     restart_command_parts: tuple[str, ...] | None
+
+
+@dataclass(slots=True, frozen=True)
+class BotInstance:
+    """One fully wired bot: transport, agent service, scheduler and stop signal.
+
+    Built by {py:func}`build_bot_instance` and driven by
+    {py:func}`telegram_acp_bot.runner.run_instances`.
+    """
+
+    spec: BotInstanceSpec
+    config: BotConfig
+    service: AcpAgentService
+    store: ScheduledTaskStore
+    bridge: TelegramBridge
+    scheduler: ScheduledTaskScheduler
+    stop_event: asyncio.Event
+
+
+def build_mcp_servers(
+    *,
+    telegram_token: str,
+    state_file: Path,
+    scheduled_tasks_db: Path,
+    extra_servers: Mapping[str, Any] | None = None,
+) -> tuple[McpServerStdio | HttpMcpServer, ...]:
+    """Return MCP servers to expose to the ACP agent.
+
+    Always includes the internal ``telegram-channel`` server, pointed at this
+    instance's own token, state file and scheduled-tasks database so two agents
+    never read each other's chat state.
+    External servers from the config file are added after it, except when an
+    external ``telegram-channel`` definition overrides the internal one. In
+    that case, the external server replaces the internal entry and keeps its
+    position in the resulting tuple.
+    """
+    internal = McpServerStdio(
+        name="telegram-channel",
+        command=sys.executable,
+        args=["-m", "telegram_acp_bot.mcp.server"],
+        env=[
+            EnvVariable(name=TOKEN_ENV, value=telegram_token),
+            EnvVariable(name=STATE_FILE_ENV, value=str(state_file)),
+            EnvVariable(name=ACP_SCHEDULED_TASKS_DB_ENV, value=str(scheduled_tasks_db)),
+        ],
+    )
+    servers: dict[str, McpServerStdio | HttpMcpServer] = {"telegram-channel": internal}
+    for name, defn in (extra_servers or {}).items():
+        if "command" in defn:
+            servers[name] = McpServerStdio(
+                name=name,
+                command=defn["command"],
+                args=defn.get("args", []),
+                env=[EnvVariable(name=k, value=v) for k, v in defn.get("env", {}).items()],
+            )
+        else:
+            servers[name] = HttpMcpServer(
+                name=name,
+                url=defn["url"],
+                headers=[HttpHeader(name=k, value=v) for k, v in defn.get("headers", {}).items()],
+                type="http",
+            )
+    return tuple(servers.values())
+
+
+def build_bot_instance(spec: BotInstanceSpec, *, stop_event: asyncio.Event) -> BotInstance:
+    """Open no resource yet, but build everything one bot needs from `spec`.
+
+    Every path in the result is the one this agent owns, which is what lets N agents
+    share a process without sharing a channel state file or a scheduler database.
+    """
+    config = make_config(
+        token=spec.token,
+        allowed_user_ids=list(spec.allowed_user_ids),
+        allowed_usernames=list(spec.allowed_usernames),
+        workspace=spec.workspace,
+        activity_mode=spec.activity_mode,
+        schedule_languages=list(spec.schedule_languages),
+        group_require_mention=spec.group_require_mention,
+        group_media_queue=spec.group_media_queue,
+        status_reactions=spec.status_reactions,
+    )
+    service = AcpAgentService(
+        SessionRegistry(),
+        program=spec.command_parts[0],
+        args=list(spec.command_parts[1:]),
+        default_permission_mode=spec.permission_mode,
+        permission_event_output=spec.permission_event_output,
+        mcp_servers=build_mcp_servers(
+            telegram_token=spec.token,
+            state_file=spec.channel_state_file,
+            scheduled_tasks_db=spec.scheduled_tasks_db,
+            extra_servers=spec.extra_mcp_servers,
+        ),
+        channel_state_file=spec.channel_state_file,
+        stdio_limit=spec.stdio_limit,
+        connect_timeout=spec.connect_timeout,
+    )
+    store = ScheduledTaskStore(spec.scheduled_tasks_db)
+    bridge = TelegramBridge(
+        config=config,
+        agent_service=service,
+        scheduled_task_store=store,
+        stop_request=stop_event.set,
+    )
+    scheduler = ScheduledTaskScheduler(store=store, runner=ScheduledTaskRunner(bridge.execute_scheduled_task))
+    return BotInstance(
+        spec=spec,
+        config=config,
+        service=service,
+        store=store,
+        bridge=bridge,
+        scheduler=scheduler,
+        stop_event=stop_event,
+    )

@@ -45,7 +45,8 @@ from telegram_acp_bot.telegram.bot import (
     _PromptInput,
     build_application,
     make_config,
-    run_polling,
+    start_application,
+    stop_application,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -726,5 +727,6 @@ __all__ = [
     "make_verbose_bridge",
     "pytest",
     "pytestmark",
-    "run_polling",
+    "start_application",
+    "stop_application",
 ]

@@ -943,31 +943,6 @@ async def test_scheduler_start_recovers_running_tasks_and_starts_loop(tmp_path: 
     assert recovered.status == "pending"
 
 
-async def test_run_polling_uses_scheduler_when_provided(monkeypatch: pytest.MonkeyPatch):
-    calls: list[object] = []
-
-    class DummyApp:
-        def run_polling(self, *, allowed_updates):
-            calls.append(allowed_updates)
-
-    fake_scheduler = cast(app_module.ScheduledTaskScheduler, FakeScheduler())
-
-    def fake_build_application(config, bridge, scheduler=None):
-        del config, bridge
-        assert scheduler is fake_scheduler
-        return DummyApp()
-
-    monkeypatch.setattr(app_module, "build_application", fake_build_application)
-
-    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".")
-    bridge = TelegramBridge(
-        config=config,
-        agent_service=cast(AgentService, ScheduledPromptService()),
-    )
-    assert app_module.run_polling(config, bridge, scheduler=fake_scheduler) == 0
-    assert len(calls) == 1
-
-
 async def test_build_application_registers_scheduler_hooks():
     bridge = TelegramBridge(
         config=make_config(token="TOKEN", allowed_user_ids=[], workspace="."),

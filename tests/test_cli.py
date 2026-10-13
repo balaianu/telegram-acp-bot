@@ -13,7 +13,6 @@ import pytest
 
 from telegram_acp_bot import get_parser, get_version, main
 from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV
-from telegram_acp_bot.telegram.bot import RESTART_EXIT_CODE
 
 CUSTOM_STDIO_LIMIT = 12_345
 CUSTOM_CONNECT_TIMEOUT = 42.5
@@ -34,7 +33,7 @@ def isolate_token_sources(monkeypatch: pytest.MonkeyPatch, mocker):
 
 def test_main_loads_dotenv(isolate_token_sources, mocker):
     """CLI loads .env before parsing arguments."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert isolate_token_sources is not None
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
     isolate_token_sources.assert_called_once_with(override=False)
@@ -54,7 +53,7 @@ def test_main_requires_agent_command():
 
 def test_main_requires_allowlist(mocker, monkeypatch):
     """Running the bot without explicit allowlist should fail fast."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USERNAMES", raising=False)
     with pytest.raises(SystemExit):
@@ -63,18 +62,18 @@ def test_main_requires_allowlist(mocker, monkeypatch):
 
 def test_main_accepts_allowed_usernames_from_env(mocker, monkeypatch):
     """Username allowlist from env should satisfy startup requirements."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERNAMES", "Alice, @Bob")
 
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    mock_run_polling.assert_called_once()
+    mock_run_bot.assert_called_once()
 
 
 def test_main_normalizes_allowed_username_cli(mocker, monkeypatch):
     """CLI usernames should be normalized (lowercase, no @)."""
-    mocker.patch("telegram_acp_bot.AcpAgentService")
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
 
     assert (
@@ -90,14 +89,14 @@ def test_main_normalizes_allowed_username_cli(mocker, monkeypatch):
         )
         == 0
     )
-    assert mock_run_polling.call_args is not None
-    config = mock_run_polling.call_args.args[0]
+    assert mock_run_bot.call_args is not None
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.allowed_usernames == {"alice"}
 
 
 def test_main_rejects_invalid_allowed_user_ids_env(mocker, monkeypatch):
     """Invalid TELEGRAM_ALLOWED_USER_IDS should fail with parser error."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "1,abc")
 
     with pytest.raises(SystemExit):
@@ -105,98 +104,46 @@ def test_main_rejects_invalid_allowed_user_ids_env(mocker, monkeypatch):
 
 
 def test_main_runs_bot(mocker):
-    """Run path delegates to run_polling."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    """Run path delegates to the multi-agent runner."""
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent --flag"]) == 0
-    mock_run_polling.assert_called_once()
-
-
-def test_main_reexecs_process_on_restart_request(mocker):
-    """When polling returns restart code, main re-execs current process."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=RESTART_EXIT_CODE)
-    mock_execvp = mocker.patch("telegram_acp_bot.os.execvp")
-    mock_execv = mocker.patch("telegram_acp_bot.os.execv", side_effect=OSError("exec failed"))
-    mocker.patch(
-        "telegram_acp_bot.sys.argv",
-        ["telegram-acp-bot", "--telegram-token", "TOKEN", "--agent-command", "agent"],
-    )
-    mocker.patch("telegram_acp_bot.sys.executable", "/usr/bin/python3")
-
-    assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 1
-    mock_execvp.assert_not_called()
-    mock_execv.assert_called_once_with(
-        "/usr/bin/python3",
-        [
-            "/usr/bin/python3",
-            "telegram-acp-bot",
-            "--telegram-token",
-            "TOKEN",
-            "--agent-command",
-            "agent",
-        ],
-    )
-
-
-def test_main_reexecs_using_restart_command(mocker):
-    """When restart command is configured, main re-execs using that command."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=RESTART_EXIT_CODE)
-    mock_execvp = mocker.patch("telegram_acp_bot.os.execvp", side_effect=OSError("execvp failed"))
-    mock_execv = mocker.patch("telegram_acp_bot.os.execv")
-
-    assert (
-        main(
-            [
-                "--telegram-token",
-                "TOKEN",
-                "--agent-command",
-                "agent",
-                "--restart-command",
-                "uv run telegram-acp-bot --telegram-token TOKEN --agent-command agent",
-            ]
-        )
-        == 1
-    )
-    mock_execvp.assert_called_once_with(
-        "uv",
-        ["uv", "run", "telegram-acp-bot", "--telegram-token", "TOKEN", "--agent-command", "agent"],
-    )
-    mock_execv.assert_not_called()
+    mock_run_bot.assert_called_once()
 
 
 def test_main_uses_env_token(mocker, monkeypatch):
     """Run path uses TELEGRAM_BOT_TOKEN when loaded from environment."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "TOKEN")
     monkeypatch.setenv("ACP_AGENT_COMMAND", "agent")
     assert main([]) == 0
-    mock_run_polling.assert_called_once()
+    mock_run_bot.assert_called_once()
 
 
 def test_main_rejects_blank_agent_command(mocker):
     """Whitespace-only agent command should be rejected."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     with pytest.raises(SystemExit):
         main(["--telegram-token", "TOKEN", "--agent-command", "   "])
 
 
 def test_main_rejects_non_positive_stdio_limit(mocker):
     """ACP stdio limit must be a positive integer."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     with pytest.raises(SystemExit):
         main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--acp-stdio-limit", "0"])
 
 
 def test_main_rejects_non_positive_connect_timeout(mocker):
     """ACP connect timeout must be a positive number."""
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     with pytest.raises(SystemExit):
         main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--acp-connect-timeout", "0"])
 
 
 def test_main_passes_stdio_limit_to_service(mocker):
     """CLI forwards acp stdio limit to service constructor."""
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert (
         main(
@@ -217,8 +164,8 @@ def test_main_passes_stdio_limit_to_service(mocker):
 
 def test_main_passes_connect_timeout_to_service(mocker):
     """CLI forwards ACP connect timeout to service constructor."""
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert (
         main(
@@ -239,8 +186,8 @@ def test_main_passes_connect_timeout_to_service(mocker):
 
 def test_main_passes_default_internal_mcp_server_to_service(mocker):
     """CLI always forwards the built-in MCP stdio server to service constructor."""
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
     assert mock_service.call_args is not None
@@ -259,8 +206,8 @@ def test_main_forwards_configured_state_file(mocker, monkeypatch: pytest.MonkeyP
     """An explicit state path reaches both the agent service and the injected MCP server."""
     configured = tmp_path / "channel-state.json"
     monkeypatch.setenv(STATE_FILE_ENV, str(configured))
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
     assert mock_service.call_args is not None
@@ -272,8 +219,8 @@ def test_main_forwards_configured_state_file(mocker, monkeypatch: pytest.MonkeyP
 def test_main_defaults_state_file_to_the_current_pid(mocker, monkeypatch: pytest.MonkeyPatch):
     """Without an override the state file stays private to this process."""
     monkeypatch.delenv(STATE_FILE_ENV, raising=False)
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
     assert mock_service.call_args is not None
@@ -328,10 +275,10 @@ def test_get_version_package_not_found(mocker):
 
 def test_main_activity_mode_defaults_to_normal(mocker):
     """Default activity mode is normal."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    assert mock_run_polling.call_args is not None
-    config = mock_run_polling.call_args.args[0]
+    assert mock_run_bot.call_args is not None
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.activity_mode == "normal"
     assert config.compact_activity is False
     assert config.schedule_languages == ("en", "es")
@@ -339,95 +286,95 @@ def test_main_activity_mode_defaults_to_normal(mocker):
 
 def test_main_compact_activity_mode_sets_flag(mocker):
     """--activity-mode compact sets compact_activity=True on the config."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--activity-mode", "compact"]) == 0
-    assert mock_run_polling.call_args is not None
-    config = mock_run_polling.call_args.args[0]
+    assert mock_run_bot.call_args is not None
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.compact_activity is True
 
 
 def test_main_activity_mode_env_var_compact(mocker, monkeypatch):
     """ACP_ACTIVITY_MODE=compact activates compact mode."""
     monkeypatch.setenv("ACP_ACTIVITY_MODE", "compact")
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    assert mock_run_polling.call_args is not None
-    config = mock_run_polling.call_args.args[0]
+    assert mock_run_bot.call_args is not None
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.compact_activity is True
 
 
 def test_main_verbose_activity_mode_sets_flag(mocker):
     """--activity-mode verbose keeps the verbose activity mode on the config."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--activity-mode", "verbose"]) == 0
-    assert mock_run_polling.call_args is not None
-    config = mock_run_polling.call_args.args[0]
+    assert mock_run_bot.call_args is not None
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.activity_mode == "verbose"
 
 
 def test_main_activity_mode_short_alias_sets_flag(mocker):
     """-m verbose is accepted as shorthand for --activity-mode verbose."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "-m", "verbose"]) == 0
-    assert mock_run_polling.call_args is not None
-    config = mock_run_polling.call_args.args[0]
+    assert mock_run_bot.call_args is not None
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.activity_mode == "verbose"
 
 
 def test_main_group_media_queue_flag_sets_config(mocker):
     """--group-media-queue turns the lazy group media queue on."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--group-media-queue"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.group_media_queue is True
 
 
 def test_main_group_media_queue_env_var_sets_config(mocker, monkeypatch):
     """ACP_TELEGRAM_GROUP_MEDIA_QUEUE=1 enables the queue without a CLI flag."""
     monkeypatch.setenv("ACP_TELEGRAM_GROUP_MEDIA_QUEUE", "1")
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.group_media_queue is True
 
 
 def test_main_group_media_queue_defaults_to_off(mocker):
     """Group media is dropped rather than queued unless the operator opts in."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.group_media_queue is False
 
 
 def test_main_status_reactions_flag_sets_config(mocker):
     """--status-reactions minimal makes the bot react on each prompt message."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent", "--status-reactions", "minimal"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.status_reactions == "minimal"
 
 
 def test_main_status_reactions_env_var_sets_config(mocker, monkeypatch):
     """ACP_TELEGRAM_STATUS_REACTIONS=minimal enables reactions without a CLI flag."""
     monkeypatch.setenv("ACP_TELEGRAM_STATUS_REACTIONS", "minimal")
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.status_reactions == "minimal"
 
 
 def test_main_status_reactions_defaults_to_off(mocker):
     """Bot reactions stay out of the way until the operator asks for them."""
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.status_reactions == "off"
 
 
 def test_main_status_reactions_config_file_sets_config(mocker, monkeypatch, tmp_path):
     """telegram.status_reactions in the config file is applied as a parser default."""
     monkeypatch.delenv("ACP_TELEGRAM_STATUS_REACTIONS", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {
@@ -436,7 +383,7 @@ def test_main_status_reactions_config_file_sets_config(mocker, monkeypatch, tmp_
         },
     )
     assert main(["--config", str(config_path)]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.status_reactions == "minimal"
 
 
@@ -453,7 +400,7 @@ def test_main_config_file_provides_token_and_agent_command(mocker, monkeypatch, 
     """Config file values are used when env vars and CLI flags are absent."""
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path, {"telegram": {"bot_token": "CFG_TOKEN"}, "acp": {"agent_command": "cfg_agent"}}
     )
@@ -465,7 +412,7 @@ def test_main_config_file_provides_allowlist(mocker, monkeypatch, tmp_path):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {"telegram": {"bot_token": "T", "allowed_user_ids": [42]}, "acp": {"agent_command": "a"}},
@@ -477,10 +424,10 @@ def test_main_env_token_overrides_config_file(mocker, monkeypatch, tmp_path):
     """TELEGRAM_BOT_TOKEN env var takes precedence over config file."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "ENV_TOKEN")
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(tmp_path, {"telegram": {"bot_token": "CFG_TOKEN"}, "acp": {"agent_command": "a"}})
     assert main(["--config", str(config_path)]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.token == "ENV_TOKEN"
 
 
@@ -488,41 +435,41 @@ def test_main_cli_token_overrides_config_file(mocker, monkeypatch, tmp_path):
     """--telegram-token CLI flag takes precedence over config file."""
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(tmp_path, {"telegram": {"bot_token": "CFG_TOKEN"}, "acp": {"agent_command": "a"}})
     assert main(["--config", str(config_path), "--telegram-token", "CLI_TOKEN"]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.token == "CLI_TOKEN"
 
 
 def test_main_config_file_activity_mode(mocker, monkeypatch, tmp_path):
     """activity_mode from config file is applied."""
     monkeypatch.delenv("ACP_ACTIVITY_MODE", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {"telegram": {"bot_token": "T"}, "acp": {"agent_command": "a", "activity_mode": "compact"}},
     )
     assert main(["--config", str(config_path)]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.compact_activity is True
 
 
 def test_main_schedule_languages_from_env(mocker, monkeypatch):
     """ACP_SCHEDULE_LANGUAGES env var configures natural-language schedule parsing."""
     monkeypatch.setenv("ACP_SCHEDULE_LANGUAGES", "es,en")
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert main(["--telegram-token", "TOKEN", "--agent-command", "agent"]) == 0
 
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.schedule_languages == ("es", "en")
 
 
 def test_main_schedule_languages_from_config_file(mocker, monkeypatch, tmp_path):
     """schedule_languages from config file are applied when env and CLI are absent."""
     monkeypatch.delenv("ACP_SCHEDULE_LANGUAGES", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {
@@ -533,14 +480,14 @@ def test_main_schedule_languages_from_config_file(mocker, monkeypatch, tmp_path)
 
     assert main(["--config", str(config_path)]) == 0
 
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.schedule_languages == ("es",)
 
 
 def test_main_schedule_languages_cli_override_env(mocker, monkeypatch):
     """CLI schedule languages override ACP_SCHEDULE_LANGUAGES."""
     monkeypatch.setenv("ACP_SCHEDULE_LANGUAGES", "es")
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     assert (
         main(
@@ -558,7 +505,7 @@ def test_main_schedule_languages_cli_override_env(mocker, monkeypatch):
         == 0
     )
 
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.schedule_languages == ("en", "pt")
 
 
@@ -586,21 +533,21 @@ def test_main_config_file_invalid_value_error(tmp_path):
 def test_main_config_file_workspace(mocker, monkeypatch, tmp_path):
     """workspace from config file is passed to make_config."""
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {"telegram": {"bot_token": "T"}, "acp": {"agent_command": "a", "workspace": str(tmp_path)}},
     )
     assert main(["--config", str(config_path)]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.default_workspace == tmp_path
 
 
 def test_main_config_file_external_stdio_mcp_server(mocker, monkeypatch, tmp_path):
     """Extra stdio MCP servers from config file are passed to the service."""
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {
@@ -623,8 +570,8 @@ def test_main_config_file_external_stdio_mcp_server(mocker, monkeypatch, tmp_pat
 def test_main_config_file_external_http_mcp_server(mocker, monkeypatch, tmp_path):
     """Extra remote HTTP MCP servers from config file are passed to the service."""
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {
@@ -643,8 +590,8 @@ def test_main_config_file_external_http_mcp_server(mocker, monkeypatch, tmp_path
 def test_main_config_file_external_server_overrides_internal(mocker, monkeypatch, tmp_path):
     """A config server named 'telegram-channel' replaces the internal one."""
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {
@@ -664,8 +611,8 @@ def test_main_config_file_stdio_limit_and_timeout(mocker, monkeypatch, tmp_path)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
     monkeypatch.delenv("ACP_STDIO_LIMIT", raising=False)
     monkeypatch.delenv("ACP_CONNECT_TIMEOUT", raising=False)
-    mock_service = mocker.patch("telegram_acp_bot.AcpAgentService")
-    mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_service = mocker.patch("telegram_acp_bot.instance.AcpAgentService")
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_path = _write_config(
         tmp_path,
         {
@@ -698,7 +645,7 @@ def test_main_auto_discovers_config_file(mocker, monkeypatch, tmp_path):
     """Config file is automatically discovered from standard locations."""
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     # Create config in one of the standard locations
     config_dir = tmp_path / ".telegram_acp_bot"
@@ -709,7 +656,7 @@ def test_main_auto_discovers_config_file(mocker, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     assert main([]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.token == "AUTO_TOKEN"
 
 
@@ -717,7 +664,7 @@ def test_main_explicit_config_overrides_auto_discovery(mocker, monkeypatch, tmp_
     """Explicit --config path takes precedence over auto-discovered files."""
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
 
     # Create config in standard location
     config_dir = tmp_path / ".telegram_acp_bot"
@@ -734,7 +681,7 @@ def test_main_explicit_config_overrides_auto_discovery(mocker, monkeypatch, tmp_
     monkeypatch.chdir(tmp_path)
 
     assert main(["--config", str(explicit_config)]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.token == "EXPLICIT_TOKEN"
 
 
@@ -742,7 +689,7 @@ def test_main_auto_discovers_config_from_xdg_config_home(mocker, monkeypatch, tm
     """Automatic discovery respects XDG_CONFIG_HOME before the legacy home path."""
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
-    mock_run_polling = mocker.patch("telegram_acp_bot.run_polling", return_value=0)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
     config_dir = tmp_path / "xdg" / "telegram_acp_bot"
     config_dir.mkdir(parents=True)
     config_path = config_dir / "config.json"
@@ -750,7 +697,7 @@ def test_main_auto_discovers_config_from_xdg_config_home(mocker, monkeypatch, tm
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     assert main([]) == 0
-    config = mock_run_polling.call_args.args[0]
+    config = mock_run_bot.call_args.args[0][0].config
     assert config.token == "XDG_TOKEN"
 
 
@@ -774,3 +721,90 @@ def test_no_agent_flag_means_the_flat_config_describes_everything():
 
     assert opts.agent == []
     assert opts.only == []
+
+
+def _two_agent_config(tmp_path: Path) -> Path:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "telegram": {"bot_token": "0:base", "allowed_user_ids": [1]},
+                "acp": {"agent_command": "base-agent"},
+                "agents": {
+                    "qoder": {"telegram": {"bot_token": "1:qoder"}},
+                    "claude": {"telegram": {"bot_token": "2:claude"}},
+                },
+            }
+        )
+    )
+    return path
+
+
+def test_main_hands_one_instance_per_agent_to_the_runner(mocker, monkeypatch, tmp_path):
+    """Every declared agent reaches the runner as its own instance, in declaration order."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+
+    assert main(["--config", str(_two_agent_config(tmp_path))]) == 0
+    assert mock_run_bot.call_args is not None
+    instances = mock_run_bot.call_args.args[0]
+    assert [instance.spec.name for instance in instances] == ["qoder", "claude"]
+    assert [instance.config.token for instance in instances] == ["1:qoder", "2:claude"]
+
+
+def test_main_shares_one_stop_event_across_the_instances(mocker, monkeypatch, tmp_path):
+    """A stop request on any agent is a request to stop the whole process."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+
+    assert main(["--config", str(_two_agent_config(tmp_path))]) == 0
+    assert mock_run_bot.call_args is not None
+    instances, stop_event = mock_run_bot.call_args.args
+    assert all(instance.stop_event is stop_event for instance in instances)
+
+
+def test_main_rejects_agents_that_share_one_bot_token(mocker, monkeypatch, tmp_path):
+    """Two agents on the same token are a startup error, not a Telegram 409 later."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
+    mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "telegram": {"bot_token": "1:shared", "allowed_user_ids": [1]},
+                "acp": {"agent_command": "a"},
+                "agents": {
+                    "qoder": {"telegram": {"bot_token": "1:shared"}},
+                    "claude": {"telegram": {"bot_token": "1:shared"}},
+                },
+            }
+        )
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        main(["--config", str(path)])
+
+
+def test_main_keeps_the_restart_command_on_the_spec(mocker):
+    """--restart-command reaches the spec the runner re-execs with."""
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+
+    assert (
+        main(
+            [
+                "--telegram-token",
+                "TOKEN",
+                "--agent-command",
+                "agent",
+                "--restart-command",
+                "uv run telegram-acp-bot",
+            ]
+        )
+        == 0
+    )
+    assert mock_run_bot.call_args is not None
+    instances = mock_run_bot.call_args.args[0]
+    assert instances[0].spec.restart_command_parts == ("uv", "run", "telegram-acp-bot")

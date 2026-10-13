@@ -253,10 +253,14 @@ class TelegramBridge:
         agent_service: AgentService,
         *,
         scheduled_task_store: ScheduledTaskStore | None = None,
+        stop_request: Callable[[], None] | None = None,
     ) -> None:
         self._config = config
         self._agent_service = agent_service
         self._scheduled_task_store = scheduled_task_store
+        # Set when a Telegram command asks the whole process to exit, so the runner can
+        # tear every instance down instead of only this bot's application.
+        self._stop_request = stop_request
         self._app: Application | None = None
         self._bot_commands: dict[str, _BotCommandHandler] = {}
         self._restart_requested = False
@@ -296,6 +300,11 @@ class TelegramBridge:
             self._agent_service.set_elicitation_request_handler(self.on_elicitation_request)
         if hasattr(self._agent_service, "set_elicitation_expiry_handler"):
             self._agent_service.set_elicitation_expiry_handler(self.on_elicitation_expired)
+
+    @property
+    def restart_requested(self) -> bool:
+        """Whether a `/restart` already asked this process to exit and re-exec."""
+        return self._restart_requested
 
     def install(self, app: Application) -> None:
         self._app = app
@@ -761,7 +770,8 @@ class TelegramBridge:
         session_id, workspace = active_session
         await self._reply(update, self._format_restart_response(session_id=session_id, workspace=workspace))
         self._restart_requested = True
-        self._app.stop_running()
+        if self._stop_request is not None:
+            self._stop_request()
 
     async def on_elicitation_request(self, request: ElicitationRequest) -> None:
         """Offer the agent's structured question as tap-able choices in the chat it came from."""
