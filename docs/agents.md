@@ -4,6 +4,9 @@ This chapter explains how to configure common ACP agents with this bot.
 
 Use {term}`ACP_AGENT_COMMAND` to define the command executed by `/new`.
 
+You do not have to pick just one: declare several and the process runs one bot per agent. See
+{ref}`config-agents`.
+
 ## Quick compatibility map
 
 | Agent | ACP support | Recommended command |

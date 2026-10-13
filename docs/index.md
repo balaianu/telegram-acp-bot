@@ -106,6 +106,7 @@ If you want the quickest tour of what the bot can do, these are good places to s
 - {ref}`deferred-followups-ux` shows how scheduled tasks work as conversational follow-ups instead of technical status messages.
 - {ref}`how-to-busy-queue` covers queued messages and the **Send now** flow when the agent is already busy.
 - {ref}`how-to-agent-dies` covers what the bot does when the agent process dies mid-answer.
+- {ref}`how-to-two-agents` shows how one process runs several agents, each behind its own Telegram bot.
 - {doc}`mcp` gives the broader picture of the internal MCP tools that power those features.
 
 ```{toctree}

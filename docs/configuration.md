@@ -53,14 +53,109 @@ The file must be a JSON object. All keys are optional. Missing keys fall back to
     "activity_mode": "normal",
     "scheduled_tasks_db": "/home/alice/.local/state/telegram-acp-bot/scheduled-tasks.sqlite3",
     "workspace": "/home/alice/projects"
+  },
+  "agents": {
+    "qoder": {
+      "acp": {
+        "agent_command": "qodercli --acp"
+      }
+    },
+    "codex": {
+      "telegram": {
+        "bot_token": "987654:xyz",
+        "allowed_user_ids": [987654321]
+      },
+      "acp": {
+        "agent_command": "npx @zed-industries/codex-acp"
+      },
+      "mcp_servers": {
+        "context7": {
+          "url": "https://mcp.context7.com/mcp"
+        }
+      }
+    }
   }
 }
 ```
+
+Without `agents`, the flat `telegram`/`acp` sections describe one bot, which is all most
+setups need. With `agents`, the process runs one bot per entry; see {ref}`config-agents`.
 
 ### Validation
 
 The config file is validated at startup. Invalid values (wrong types, unknown enum values) are reported as clear error messages and the bot does not start.
 
+(config-agents)=
+## Multiple agents
+
+One process can run several agents side by side: each declared agent gets its own ACP
+child process and its own Telegram bot, all polled from a single event loop. Everything
+below describes that fleet; a config without `agents` runs exactly one bot named
+`default` and behaves as it always did.
+
+### Names
+
+An agent name must match `^[a-z0-9][a-z0-9_-]{0,62}$`, because the same string is a log
+field, an environment variable suffix and a directory name. Hyphens are legal in a name
+and illegal in a variable, so they become underscores when the name is used as a suffix:
+agent `code-review` is pinned by a `TELEGRAM_BOT_TOKEN_CODE_REVIEW` environment variable.
+
+### What an agent may override
+
+Each `agents.<name>` entry may only repeat the top-level sections `telegram`, `acp` and
+`mcp_servers`, so one syntax describes a single bot and a fleet alike. The flat sections
+are the base and each agent layers its own keys on top, key by key. `mcp_servers` is
+merged by server name and the agent's definition wins, so one agent can swap a shared
+server without changing it for the others.
+
+### Tokens
+
+Every bot needs a distinct Telegram token, resolved in this order:
+
+1. `TELEGRAM_BOT_TOKEN_<NAME>` in the environment.
+2. `agents.<name>.telegram.bot_token` in the config file.
+3. The flat token (`--telegram-token`, {term}`TELEGRAM_BOT_TOKEN` or `telegram.bot_token`).
+
+Startup refuses two agents that end up on the same token and names both, because Telegram
+answers concurrent polls of one bot with error 409 — the fleet would look alive and lose
+updates.
+
+The flat sections still need a value, because they are what an unset key falls back to: the
+base carries `telegram.bot_token` and `acp.agent_command` (or their environment
+equivalents) alongside the per-agent pins that make each bot distinct. An agent that ends
+up on the base token is reported by the same duplicate-token check.
+
+### Declaring agents on the command line
+
+- `--agent NAME=COMMAND` declares an agent, or overrides the command of a declared one,
+  without editing the config file. It is repeatable. A name that only appears here still
+  needs a token from one of the sources above.
+- `--only NAME` runs a subset of the declared agents. It is repeatable and refuses a name
+  that nothing declares. The config file offers the same list under a top-level `"only"`
+  key, which the flag replaces.
+
+### Runtime files
+
+Two bots must not route through one file, so a named agent keeps its channel state and
+its scheduled-tasks database in a directory of its own under {envvar}`XDG_STATE_HOME`
+(`~/.local/state/telegram-acp-bot/agents/<name>/` by default), pinned by
+`ACP_TELEGRAM_CHANNEL_STATE_FILE_<NAME>` and `ACP_SCHEDULED_TASKS_DB_<NAME>`; both are
+defined in the {ref}`env-var-glossary` below. Each agent also gets its own scheduler and
+its own SQLite database, which is what stops one task from being claimed twice.
+
+### Failure and restart
+
+The fleet is all-or-nothing on purpose. If any agent fails to start, or fails to shut
+down cleanly, the process stops every other bot and exits non-zero, so the service
+manager restarts the whole thing. A half-alive fleet would leave one chat silently
+answering nothing. `/restart` follows the same rule: it relaunches the process, and every
+agent in it.
+
+While it runs, every log line an instance produces carries an `agent` field, and `/help`
+names the agent behind the bot whenever it is not `default`, so two bots in one process stay
+tellable apart. To run two agents, follow {ref}`how-to-two-agents`.
+
+(env-var-glossary)=
 ## Environment variables
 
 Environment variables override any matching config file value. They are the recommended way to pass secrets like the bot token in container or CI environments.
@@ -68,6 +163,13 @@ Environment variables override any matching config file value. They are the reco
 ```{glossary}
 TELEGRAM_BOT_TOKEN
   Telegram bot token (from BotFather). Required unless set via config file or `--telegram-token`.
+
+TELEGRAM_BOT_TOKEN_<NAME>
+  Telegram bot token of one declared agent, where `<NAME>` is the agent name uppercased
+  and with `-` replaced by `_`. Wins over `agents.<name>.telegram.bot_token` and over the
+  flat {term}`TELEGRAM_BOT_TOKEN`, so a fleet keeps its secrets out of the config file.
+  Two agents that resolve to the same token are rejected at startup.
+  Example: `TELEGRAM_BOT_TOKEN_QODER`.
 
 TELEGRAM_ALLOWED_USER_IDS
   Comma-separated allowlist of Telegram numeric user IDs.
@@ -149,6 +251,14 @@ ACP_ACTIVITY_MODE
 ACP_SCHEDULED_TASKS_DB
   Path to the SQLite database used for deferred follow-up tasks.
 
+ACP_SCHEDULED_TASKS_DB_<NAME>
+  Path to the deferred follow-up database of one declared agent, `<NAME>` uppercased with
+  `-` replaced by `_`. Wins over `agents.<name>.acp.scheduled_tasks_db`. Without either, a
+  named agent gets its own database in the per-agent state directory, such as
+  `~/.local/state/telegram-acp-bot/agents/qoder/scheduled-tasks.sqlite3`, so each bot runs
+  its own scheduler on its own rows.
+  Example: `ACP_SCHEDULED_TASKS_DB_QODER=/srv/qoder.sqlite3`.
+
 ACP_TELEGRAM_CHANNEL_ALLOW_PATH
   Enables `path` inputs for the internal MCP `telegram_send_attachment` tool.
   Disabled by default. Set to `1` (or `true`/`yes`/`on`) only when file-path inputs are trusted.
@@ -158,6 +268,15 @@ ACP_TELEGRAM_CHANNEL_STATE_FILE
   When unset, the bot uses a file named after its own process id in the system temp directory, so the
   state disappears with that process. Set it to a stable path to carry routing state and queued media
   references across restarts. The bot injects the resolved path into the internal MCP server either way.
+
+ACP_TELEGRAM_CHANNEL_STATE_FILE_<NAME>
+  Path to the MCP channel state file of one declared agent, `<NAME>` uppercased with `-`
+  replaced by `_`. Wins over the unprefixed {term}`ACP_TELEGRAM_CHANNEL_STATE_FILE`, which
+  only ever applies to the implicit `default` agent. Without a pin, a named agent gets
+  its own per-agent state directory, such as
+  `~/.local/state/telegram-acp-bot/agents/qoder/channel-state.json`, so one
+  agent's routing state and queued media never land in another agent's file.
+  Example: `ACP_TELEGRAM_CHANNEL_STATE_FILE_QODER=/srv/qoder-state.json`.
 
 ACP_TELEGRAM_BOT_TOKEN
   Telegram bot token used by the internal MCP server when sending attachments.
@@ -181,6 +300,8 @@ Key flags that map to config file or environment variable equivalents:
 | `--group-media-queue` | `ACP_TELEGRAM_GROUP_MEDIA_QUEUE` | `telegram.group_media_queue` |
 | `--status-reactions` | `ACP_TELEGRAM_STATUS_REACTIONS` | `telegram.status_reactions` |
 | `--agent-command` | `ACP_AGENT_COMMAND` | `acp.agent_command` |
+| `--agent NAME=COMMAND` | — | `agents` |
+| `--only NAME` | — | `only` |
 | `--restart-command` | `ACP_RESTART_COMMAND` | `acp.restart_command` |
 | `--permission-mode` | `ACP_PERMISSION_MODE` | `acp.permission_mode` |
 | `--permission-event-output` | `ACP_PERMISSION_EVENT_OUTPUT` | `acp.permission_event_output` |
@@ -261,7 +382,10 @@ For adding external MCP servers, see {doc}`mcp`.
 - {term}`ACP_TELEGRAM_CHANNEL_STATE_FILE` points to runtime state used to resolve session routing for MCP calls.
   Leaving it unset gives each bot process a private file in the temp directory; setting it pins one shared path
   that survives restarts.
+- `ACP_TELEGRAM_CHANNEL_STATE_FILE_<NAME>` pins that file for one declared agent, and is the only form a
+  named agent reads; the unprefixed variable stays reserved for the implicit `default` agent.
 - {term}`ACP_TELEGRAM_BOT_TOKEN` is the token consumed by the MCP server when calling Telegram Bot API.
+  The bot injects the instance's own token per agent, so each internal server speaks for its own bot.
 
 Security notes:
 

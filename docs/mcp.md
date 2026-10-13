@@ -148,6 +148,13 @@ Both attachment delivery and scheduling need to know which Telegram chat should 
 
 By default that file is named after the running bot process, so routing state and queued media references are discarded when the process exits. Set {term}`ACP_TELEGRAM_CHANNEL_STATE_FILE` to a stable path to keep them across restarts; see {doc}`configuration`.
 
+(mcp-per-agent-state)=
+When one process runs several agents, each gets its own state file, database and internal `telegram-channel` server,
+pointed at that agent's own token. Agent A's tools therefore cannot resolve or deliver into agent B's chats, and one
+agent cannot claim another agent's scheduled task. A named agent keeps those files in its own
+directory under {envvar}`XDG_STATE_HOME`, such as `~/.local/state/telegram-acp-bot/agents/qoder/`;
+see {ref}`config-agents`.
+
 `AcpAgentService` persists a `session_id -> chat_id` mapping, and the MCP server reads that mapping when a tool call arrives. If a tool call does not provide `session_id`, the server tries to infer it. The inference order is intentionally conservative: if there is only one active mapped session, it uses that; otherwise it tries the last active session remembered by the channel state. If neither rule produces a safe answer, the tool returns an explicit error rather than guessing.
 
 This routing model is what allows an agent response such as “send me the screenshot” or “remind me in 20 minutes” to affect the same Telegram chat that originated the ACP session.

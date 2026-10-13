@@ -364,6 +364,72 @@ session instead, and the interrupted one stays reachable through `/resume`. The 
 permission or question buttons are handled with the dead agent: approvals that agent can no longer act on are dropped
 rather than left waiting for a tap.
 
+(how-to-two-agents)=
+## 14. Run two agents side by side
+
+One process can drive several agents at once, each behind its own Telegram bot. That is how
+you keep a fast, cheap agent for everyday questions next to a heavier one for long tasks,
+without running and supervising a process per bot.
+
+Create a second bot with `@BotFather`, then declare both in a config file. Keep the tokens in
+the environment and out of the file:
+
+```json
+{
+  "telegram": {
+    "allowed_user_ids": [123456789]
+  },
+  "acp": {
+    "workspace": "/home/alice/projects"
+  },
+  "agents": {
+    "qoder": {
+      "acp": {
+        "agent_command": "qodercli --acp"
+      }
+    },
+    "codex": {
+      "acp": {
+        "agent_command": "npx @zed-industries/codex-acp"
+      },
+      "telegram": {
+        "allowed_user_ids": [123456789, 987654321]
+      }
+    }
+  }
+}
+```
+
+The flat sections carry what both bots share, and each agent overrides only what differs; see
+{ref}`config-agents`. Because an agent that sets nothing falls back to the flat token, give
+the base a token of its own too and pin each agent separately:
+
+```bash
+export TELEGRAM_BOT_TOKEN=0:shared-default
+export TELEGRAM_BOT_TOKEN_QODER=111111:qoder
+export TELEGRAM_BOT_TOKEN_CODEX=222222:codex
+```
+
+Preview the command menus, register them, and start the fleet:
+
+```bash
+telegram-acp-bot --config ./fleet.json register-commands --dry-run
+telegram-acp-bot --config ./fleet.json register-commands
+telegram-acp-bot --config ./fleet.json
+```
+
+You get one ACP child process and one Telegram session per agent. Each bot keeps its own
+chats, activity mode, permission decisions, scheduled tasks and channel state, so a long
+prompt in one chat does not stop the other bot from answering. While a bot works, every log
+line it produces carries `agent=qoder`, and its `/help` opens with the agent's name.
+
+Two things worth knowing before you rely on it:
+
+- A bot that cannot start takes the whole process down, so the service manager brings
+  everything back rather than leaving one chat silently unanswered. Use `--only qoder` to run
+  one agent while you debug the other.
+- `/restart` re-launches the process, so it restarts every agent, not only the bot you asked.
+
 ## Notes
 
 - Session scope is per Telegram chat.
@@ -375,11 +441,15 @@ rather than left waiting for a tap.
   section above.
 - A question the agent asks over ACP (an elicitation) is offered as tap-to-answer buttons; see the how-to section above.
 - A dead agent process is restarted and its session reloaded on the next message; see {ref}`how-to-agent-dies`.
+- Several agents can run in one process, each behind its own Telegram bot; see {ref}`how-to-two-agents`.
 
 ## Logging and traceability
 
 Every application log line includes contextual identifiers:
 
+- `agent`: which agent of this process produced the line. A single-bot deployment always
+  reports `default`, and the `text` format omits the field on the few lines logged before any
+  bot starts.
 - `chat_id`: Telegram chat id.
 - `session_id`: ACP session id (when a session is active).
 - `prompt_cycle_id`: per-prompt cycle/task id generated for each incoming user prompt.

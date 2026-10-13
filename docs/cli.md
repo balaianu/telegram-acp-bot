@@ -29,6 +29,16 @@ The bot entrypoint is `telegram-acp-bot`.
   `@` prefix is optional; values are normalized to lowercase.
   At least one allowlist entry is required across IDs/usernames.
 
+- `--agent NAME=COMMAND`
+  Repeatable. Declares one agent of a multi-agent run, or overrides the ACP command line of an
+  agent the config file already declares, without editing the file.
+  Each name is a separate Telegram bot, so give it its own `TELEGRAM_BOT_TOKEN_<NAME>`.
+  Names must match `^[a-z0-9][a-z0-9_-]{0,62}$`. See {ref}`config-agents`.
+
+- `--only NAME`
+  Repeatable. Runs just the named agent(s) of the declared set, and refuses a name nothing declares.
+  The config file offers the same choice as a top-level `"only"` list, which this flag replaces.
+
 - `--group-require-mention`
   Default: {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION`.
   Flag: when set, group messages are answered only if they `@mention` the bot or reply to
@@ -103,6 +113,10 @@ The bot entrypoint is `telegram-acp-bot`.
     {term}`TELEGRAM_ALLOWED_USER_IDS`, or {term}`TELEGRAM_ALLOWED_USERNAMES`.
 - MCP behavior:
   - `telegram-acp-bot` always advertises an internal MCP stdio server (`telegram-channel`) to the ACP agent.
+- Multi-agent behavior (see {ref}`config-agents`):
+  - `/restart` relaunches the process, so every agent in the fleet restarts, not only the bot that was asked.
+  - One agent failing to start stops all of them and exits non-zero, leaving the whole fleet to the service manager.
+  - `--agent`/`--only` never register Telegram commands; run `register-commands` for that.
 
 ## register-commands
 
@@ -117,6 +131,12 @@ telegram-acp-bot register-commands --telegram-token <TOKEN> [options]
 - `--telegram-token`
   Default: {term}`TELEGRAM_BOT_TOKEN`.
   Required if {term}`TELEGRAM_BOT_TOKEN` is not set.
+  Ignored for agents the config file declares, since each of those resolves its own token.
+
+- `--bot`
+  Name of one declared agent to register for.
+  Without it, a config file that declares agents registers every one of them in turn, and a flat
+  config registers its single bot. Naming an agent nothing declares exits with code `2`.
 
 - `--scope`
   BotCommandScope to target.
@@ -163,12 +183,31 @@ Delete all registered commands for the default scope:
 telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN" --delete
 ```
 
+Register every agent of a fleet, each with its own token, and preview it first:
+
+```bash
+telegram-acp-bot --config ./telegram-acp-bot.json register-commands --dry-run
+telegram-acp-bot --config ./telegram-acp-bot.json register-commands
+```
+
+Register one agent of that fleet:
+
+```bash
+telegram-acp-bot --config ./telegram-acp-bot.json register-commands --bot qoder
+```
+
 ### Notes
 
 - Command definitions are sourced from the codebase constant
   `telegram_acp_bot.telegram.bot.BOT_COMMANDS`.  Running `register-commands` is idempotent —
   it is safe to call multiple times.
-- Exit code `0` on success; `1` on Telegram API error.
+- Exit code `0` on success; `1` on Telegram API error; `2` on a missing token or an unknown `--bot`.
+- A fleet is registered bot by bot: one refused bot returns `1` after the others were still
+  registered, and every line names the bot it belongs to (`[qoder] Registered …`). A flat config
+  has one bot, so its lines stay unprefixed.
+- A declared agent with no token anywhere is reported as a missing
+  `TELEGRAM_BOT_TOKEN_<NAME>` before any API call, so a half-configured fleet never
+  registers anything.
 - Transport logs stay quiet on this path. The request URL that `httpx` prints at INFO is the bot
   token, and this sub-command never reaches the bot's own logging setup, so it lowers `httpx`,
   `httpcore`, `telegram.ext` and `apscheduler` to `WARNING` before calling the API. Only the
