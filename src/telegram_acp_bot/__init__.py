@@ -95,6 +95,24 @@ def get_parser() -> argparse.ArgumentParser:
         help="Allowed Telegram username (with or without @). Can be repeated.",
     )
     parser.add_argument(
+        "--agent",
+        action="append",
+        default=[],
+        metavar="NAME=COMMAND",
+        help=(
+            "Declare or override the ACP command line of one agent, repeatable: "
+            "--agent qoder='qodercli --acp' --agent claude=claude-code-acp. Each name is a "
+            "separate bot, so give it its own TELEGRAM_BOT_TOKEN_<NAME>."
+        ),
+    )
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Run just the named agent(s) of the declared set. Can be repeated.",
+    )
+    parser.add_argument(
         "--workspace",
         default=os.getcwd(),
         help="Default workspace path for /new when path is not provided.",

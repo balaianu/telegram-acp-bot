@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from telegram_acp_bot import get_version, main
+from telegram_acp_bot import get_parser, get_version, main
 from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV
 from telegram_acp_bot.telegram.bot import RESTART_EXIT_CODE
 
@@ -758,3 +758,19 @@ def test_main_rejects_blank_explicit_config_path():
     """Blank explicit --config values fail instead of falling back to discovery."""
     with pytest.raises(SystemExit, match="2"):
         main(["--config", "   "])
+
+
+def test_agent_and_only_flags_accumulate_in_declaration_order():
+    opts = get_parser().parse_args(
+        ["--agent", "qoder=qodercli --acp", "--agent", "claude=claude-code-acp", "--only", "qoder"]
+    )
+
+    assert opts.agent == ["qoder=qodercli --acp", "claude=claude-code-acp"]
+    assert opts.only == ["qoder"]
+
+
+def test_no_agent_flag_means_the_flat_config_describes_everything():
+    opts = get_parser().parse_args([])
+
+    assert opts.agent == []
+    assert opts.only == []

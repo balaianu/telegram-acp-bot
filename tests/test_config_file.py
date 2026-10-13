@@ -257,3 +257,69 @@ def test_mcp_servers_remote_url_not_string(tmp_path: Path) -> None:
 def test_mcp_servers_remote_headers_not_string_dict(tmp_path: Path) -> None:
     with pytest.raises(ConfigFileError, match=r"'headers' must be an object"):
         load_config_file(write_config(tmp_path, {"mcp_servers": {"srv": {"url": "http://x", "headers": {"h": 1}}}}))
+
+
+def test_agents_section_loads(tmp_path: Path):
+    data = {"agents": {"qoder": {"acp": {"agent_command": "qodercli --acp"}}, "claude-code": {"telegram": {}}}}
+
+    assert load_config_file(write_config(tmp_path, data)) == data
+
+
+def test_agents_must_be_an_object(tmp_path: Path):
+    with pytest.raises(ConfigFileError, match="'agents' must be a JSON object"):
+        load_config_file(write_config(tmp_path, {"agents": ["qoder"]}))
+
+
+def test_agents_must_declare_something(tmp_path: Path):
+    with pytest.raises(ConfigFileError, match="'agents' must declare at least one agent"):
+        load_config_file(write_config(tmp_path, {"agents": {}}))
+
+
+@pytest.mark.parametrize(
+    "name", ["Qoder", "-qoder", "with space", "a" * 64], ids=["uppercase", "dash", "space", "long"]
+)
+def test_agent_name_must_be_safe_as_a_path(name: str, tmp_path: Path):
+    with pytest.raises(ConfigFileError, match="agent names must match"):
+        load_config_file(write_config(tmp_path, {"agents": {name: {}}}))
+
+
+def test_agent_entry_must_be_an_object(tmp_path: Path):
+    with pytest.raises(ConfigFileError, match=r"agents\.qoder: must be a JSON object"):
+        load_config_file(write_config(tmp_path, {"agents": {"qoder": "qodercli"}}))
+
+
+def test_agent_entry_rejects_an_unknown_section(tmp_path: Path):
+    with pytest.raises(ConfigFileError, match=r"agents.qoder: has unknown section\(s\) \['ssh'\]"):
+        load_config_file(write_config(tmp_path, {"agents": {"qoder": {"ssh": "host"}}}))
+
+
+@pytest.mark.parametrize(
+    ("section", "data", "expected"),
+    [
+        ("telegram", {"bot_token": 5}, "'telegram.bot_token' must be a string"),
+        ("telegram", {"group_media_queue": "yes"}, "'telegram.group_media_queue' must be a boolean"),
+        ("acp", {"agent_command": 5}, "'acp.agent_command' must be a string"),
+        ("acp", {"activity_mode": "loud"}, "'acp.activity_mode' must be one of"),
+        ("mcp_servers", {"srv": {"url": "u", "command": "c"}}, "MCP server 'srv' cannot define both"),
+    ],
+    ids=["token", "flag", "command", "mode", "mcp"],
+)
+def test_agent_section_errors_name_the_agent(section: str, data: object, expected: str, tmp_path: Path):
+    with pytest.raises(ConfigFileError) as caught:
+        load_config_file(write_config(tmp_path, {"agents": {"qoder": {section: data}}}))
+
+    assert f"agents.qoder: {expected}" in str(caught.value)
+
+
+def test_only_must_be_a_list_of_names(tmp_path: Path):
+    with pytest.raises(ConfigFileError, match="'only' must be a list of agent names"):
+        load_config_file(write_config(tmp_path, {"only": "qoder"}))
+
+
+def test_only_must_not_be_empty(tmp_path: Path):
+    with pytest.raises(ConfigFileError, match="'only' must name at least one agent"):
+        load_config_file(write_config(tmp_path, {"only": []}))
+
+
+def test_only_accepts_a_list_of_names(tmp_path: Path):
+    assert load_config_file(write_config(tmp_path, {"only": ["qoder"]})) == {"only": ["qoder"]}
