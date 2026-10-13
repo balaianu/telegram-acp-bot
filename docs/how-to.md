@@ -342,6 +342,28 @@ Three limits to know about:
 The question is sent as its own message rather than into the compact status bubble, because the status line is rewritten
 while the agent works and would overwrite a question nobody has answered yet.
 
+(how-to-agent-dies)=
+## 13. Keep working after the agent dies
+
+The agent runs as a child process, so it can die while the bot is still running — it is killed by mistake, runs out
+of memory, or exits on its own. The bot notices and brings the chat back by itself; you do not need `/new` or a bot
+restart.
+
+What happens depends on when the death is noticed:
+
+- **Between two messages**: the next message starts a fresh agent, reloads the same session, and is answered
+  normally. Nothing is lost.
+- **In the middle of an answer**: the bot restarts the agent and reloads the same session, then replies with a notice
+  instead of an answer. The interrupted message is **not** replayed, because the agent may already have run part of
+  it (a command, an edit), and running that twice is worse than asking you once. Send the message again.
+- **The agent cannot be started at all** (for example the binary in {term}`ACP_AGENT_COMMAND` is gone): the bot says so,
+  and `/new` is the way back once the command is fixed.
+
+Reloading uses ACP `session/load`, so the conversation history survives. An agent that does not implement it gets a new
+session instead, and the interrupted one stays reachable through `/resume`. The chat's permission mode and any pending
+permission or question buttons are handled with the dead agent: approvals that agent can no longer act on are dropped
+rather than left waiting for a tap.
+
 ## Notes
 
 - Session scope is per Telegram chat.
@@ -352,6 +374,7 @@ while the agent works and would overwrite a question nobody has answered yet.
 - `/cmds` shows the slash commands the agent advertised for the current session as tap-to-run buttons; see the how-to
   section above.
 - A question the agent asks over ACP (an elicitation) is offered as tap-to-answer buttons; see the how-to section above.
+- A dead agent process is restarted and its session reloaded on the next message; see {ref}`how-to-agent-dies`.
 
 ## Logging and traceability
 

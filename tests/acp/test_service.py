@@ -635,6 +635,166 @@ async def test_prompt_resets_active_auto_approve_on_prompt_error(tmp_path: Path)
     assert live.active_prompt_auto_approve is False
 
 
+def make_restart_fakes(
+    connections: list[FakeConnection],
+    processes: list[FakeProcess],
+):
+    """Spawner/connector pair handing out one process+connection per ACP start."""
+
+    async def fake_spawn(program: str, *args: str, **kwargs):
+        del program, args, kwargs
+        if not processes:
+            raise FileNotFoundError(AGENT_BINARY_MISSING_ERROR)
+        return processes.pop(0)
+
+    def fake_connect(client, input_stream, output_stream, **kwargs):
+        del input_stream, output_stream
+        connection = connections.pop(0)
+        connection.client = client
+        return connection
+
+    return fake_spawn, fake_connect
+
+
+async def test_prompt_revives_session_when_agent_dies_mid_turn(tmp_path: Path):
+    dying = ConnectionLossConnection(session_id="crash-session")
+    revived = FakeConnection(session_id="crash-session")
+    processes = [FakeProcess(), FakeProcess()]
+    spawn, connect = make_restart_fakes([dying, revived], processes)
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+
+    reply = await service.prompt(chat_id=1, text="continue")
+
+    assert reply is not None and reply.text == AGENT_EXIT_NOTICE
+    # The half-finished turn is not replayed onto the fresh agent.
+    assert revived.prompt_calls == []
+    assert revived.load_session_mcp_servers == []
+    assert revived.cwd == str(tmp_path.resolve())
+    assert service._live_by_chat[1].acp_session_id == "crash-session"
+
+
+async def test_prompt_runs_on_revived_agent_when_agent_died_between_turns(tmp_path: Path):
+    dead = FakeConnection(session_id="exit-session")
+    first_process = FakeProcess()
+    revived = FakeConnection(session_id="exit-session")
+    processes = [first_process, FakeProcess()]
+    spawn, connect = make_restart_fakes([dead, revived], processes)
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+    first_process.returncode = 137
+
+    reply = await service.prompt(chat_id=1, text="hello again")
+
+    assert reply is not None and reply.text == "hello from acp"
+    assert revived.prompt_calls == ["exit-session"]
+
+
+async def test_revive_starts_new_session_when_agent_cannot_load(tmp_path: Path):
+    dying = ConnectionLossConnection(session_id="crash-session")
+    # Two fresh agents take over: the one that refuses `session/load`, then the one that starts a session.
+    refuses_load = FakeConnection(session_id="crash-session", supports_load_session=False)
+    replacement = FakeConnection(session_id="replacement-session")
+    processes = [FakeProcess(), FakeProcess(), FakeProcess()]
+    spawn, connect = make_restart_fakes([dying, refuses_load, replacement], processes)
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+
+    reply = await service.prompt(chat_id=1, text="continue")
+
+    assert reply is not None and reply.text == AGENT_EXIT_NOTICE
+    assert replacement.new_session_mcp_servers == []
+    assert service._live_by_chat[1].acp_session_id == "replacement-session"
+
+
+async def test_revive_raises_when_agent_cannot_be_restarted(tmp_path: Path):
+    dying = ConnectionLossConnection(session_id="crash-session")
+    processes = [FakeProcess()]
+    spawn, connect = make_restart_fakes([dying], processes)
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+
+    with pytest.raises(AgentConnectionLostError):
+        await service.prompt(chat_id=1, text="continue")
+
+
+async def test_revive_keeps_chat_permission_mode(tmp_path: Path):
+    dying = ConnectionLossConnection(session_id="approve-session")
+    revived = FakeConnection(session_id="approve-session")
+    processes = [FakeProcess(), FakeProcess()]
+    spawn, connect = make_restart_fakes([dying, revived], processes)
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+    await service.set_session_permission_mode(chat_id=1, mode="approve")
+
+    await service.prompt(chat_id=1, text="continue")
+
+    policy = service.get_permission_policy(chat_id=1)
+    assert policy is not None and policy.session_mode == "approve"
+
+
+async def test_revive_drops_permission_requests_of_the_dead_session(tmp_path: Path):
+    dying = ConnectionLossConnection(session_id="permission-session")
+    revived = FakeConnection(session_id="permission-session")
+    processes = [FakeProcess(), FakeProcess()]
+    spawn, connect = make_restart_fakes([dying, revived], processes)
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+
+    future: asyncio.Future[RequestPermissionResponse] = asyncio.get_running_loop().create_future()
+    service._pending_permissions["req-1"] = _PendingPermission(
+        request_id="req-1",
+        chat_id=1,
+        acp_session_id="permission-session",
+        tool_title="run tests",
+        tool_call_id="call-1",
+        options=(),
+        future=future,
+    )
+    # Another chat's approval and an already answered one must survive this revive untouched.
+    other: asyncio.Future[RequestPermissionResponse] = asyncio.get_running_loop().create_future()
+    service._pending_permissions["req-other"] = _PendingPermission(
+        request_id="req-other",
+        chat_id=2,
+        acp_session_id="other-session",
+        tool_title="read file",
+        tool_call_id="call-2",
+        options=(),
+        future=other,
+    )
+    answered: asyncio.Future[RequestPermissionResponse] = asyncio.get_running_loop().create_future()
+    answered.set_result(RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled")))
+    service._pending_permissions["req-answered"] = _PendingPermission(
+        request_id="req-answered",
+        chat_id=1,
+        acp_session_id="permission-session",
+        tool_title="read file",
+        tool_call_id="call-3",
+        options=(),
+        future=answered,
+    )
+
+    await service.prompt(chat_id=1, text="continue")
+
+    assert future.done()
+    assert future.result().outcome.outcome == "cancelled"
+    assert "req-1" not in service._pending_permissions
+    assert "req-other" in service._pending_permissions and not other.done()
+    assert "req-answered" in service._pending_permissions
+
+
+async def test_cancel_ignores_an_exited_agent(tmp_path: Path):
+    connection = FakeConnection(session_id="cancel-session")
+    process = FakeProcess()
+    spawn, connect = make_restart_fakes([connection], [process])
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], spawner=spawn, connector=connect)
+    await service.new_session(chat_id=1, workspace=tmp_path)
+    process.returncode = 1
+
+    assert await service.cancel(chat_id=1) is False
+    assert connection.prompt_calls == []
+
+
 async def test_prompt_resolves_file_uri_resource_as_image(tmp_path: Path):
     workspace = tmp_path / "ws"
     image_path = workspace / "img sample.png"

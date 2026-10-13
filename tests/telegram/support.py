@@ -17,6 +17,7 @@ from telegram_acp_bot.acp.models import (
     ActivityMode,
     AgentActivityBlock,
     AgentCommand,
+    AgentConnectionLostError,
     AgentOutputLimitExceededError,
     AgentReply,
     FilePayload,
@@ -53,6 +54,7 @@ EXPECTED_OUTBOUND_DOCUMENTS = 2
 TEST_CHAT_ID = 100
 EXPECTED_ACTIVITY_MESSAGES = 3
 ACP_STDIO_LIMIT_ERROR = "Separator is found, but chunk is longer than limit"
+AGENT_CONNECTION_LOST_ERROR = "agent could not be restarted for chat_id=100"
 EXPECTED_TEXT_REPLIES_WITH_IMPLICIT_AND_EXPLICIT_SESSION = 3
 EXPECTED_BUSY_NOTIFY_MESSAGES_AFTER_REPLACE = 2
 EXPECTED_REPEATED_ACTIVITY_MESSAGES = 2
@@ -639,6 +641,7 @@ def make_verbose_bridge() -> TelegramBridge:
 
 __all__ = [
     "ACP_STDIO_LIMIT_ERROR",
+    "AGENT_CONNECTION_LOST_ERROR",
     "BUSY_CALLBACK_PREFIX",
     "BUSY_SENT_TEXT",
     "BUSY_STILL_QUEUED_TEXT",
@@ -658,6 +661,7 @@ __all__ = [
     "AgentActivityBlock",
     "AgentCommand",
     "AgentCommandsService",
+    "AgentConnectionLostError",
     "AgentOutputLimitExceededError",
     "AgentReply",
     "AgentService",

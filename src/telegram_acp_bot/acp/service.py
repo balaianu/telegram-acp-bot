@@ -46,6 +46,7 @@ from telegram_acp_bot.acp.elicitation import elicitation_content, elicitation_fo
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
     AgentCommand,
+    AgentConnectionLostError,
     AgentOutputLimitExceededError,
     AgentReply,
     ElicitationRequest,
@@ -85,6 +86,11 @@ from telegram_acp_bot.mcp.state import (
 logger = logging.getLogger(__name__)
 
 PROCESS_SHUTDOWN_TIMEOUT_SECONDS = 3
+
+AGENT_EXIT_NOTICE = (
+    "The agent process exited while it was working on your last message, so that message was not "
+    "finished. The session is back — send the message again to continue."
+)
 
 
 def _is_missing_process_error(exc: OSError) -> bool:
@@ -281,48 +287,141 @@ class AcpAgentService:
                 logger.warning("Prompt ignored because no live session exists for chat_id=%s", chat_id)
             return None
 
+        async with live.prompt_lock:
+            if self._agent_exited(live):
+                # The agent died between turns: reviving before the prompt means this message still
+                # runs, because none of it reached the dead process.
+                live = await self._revive_session(chat_id=chat_id, stale=live)
+            return await self._exchange(
+                chat_id=chat_id,
+                live=live,
+                text=text,
+                prompt_blocks=self._prompt_blocks(text=text, images=images, files=files),
+            )
+
+    def _prompt_blocks(
+        self,
+        *,
+        text: str,
+        images: tuple[PromptImage, ...],
+        files: tuple[PromptFile, ...],
+    ) -> list[PromptContentBlock]:
+        prompt_blocks: list[PromptContentBlock] = [text_block(text)]
+        prompt_blocks.extend(
+            [ImageContentBlock(data=image.data_base64, mime_type=image.mime_type, type="image") for image in images]
+        )
+        for file in files:
+            if file.text_content is not None:
+                prompt_blocks.append(text_block(f"File: {file.name}\n\n{file.text_content}"))
+                continue
+            if file.data_base64 is not None:
+                prompt_blocks.append(text_block(f"Binary file attached: {file.name} ({file.mime_type or 'unknown'})"))
+        return prompt_blocks
+
+    async def _exchange(
+        self,
+        *,
+        chat_id: int,
+        live: _LiveSession,
+        text: str,
+        prompt_blocks: list[PromptContentBlock],
+    ) -> AgentReply:
+        """Run one prompt turn, reviving the chat when the agent dies underneath it."""
         with bind_log_context(chat_id=chat_id, session_id=live.acp_session_id):
             logger.info("Prompt to ACP: %s", log_text_preview(text))
-            async with live.prompt_lock:
-                if live.next_prompt_auto_approve:
-                    live.active_prompt_auto_approve = True
-                    live.next_prompt_auto_approve = False
-                live.client.start_capture(live.acp_session_id)
-                prompt_blocks: list[PromptContentBlock] = [text_block(text)]
-                prompt_blocks.extend(
-                    [
-                        ImageContentBlock(data=image.data_base64, mime_type=image.mime_type, type="image")
-                        for image in images
-                    ]
-                )
-                for file in files:
-                    if file.text_content is not None:
-                        text_payload = f"File: {file.name}\n\n{file.text_content}"
-                        prompt_blocks.append(text_block(text_payload))
-                        continue
-                    if file.data_base64 is not None:
-                        prompt_blocks.append(
-                            text_block(f"Binary file attached: {file.name} ({file.mime_type or 'unknown'})")
-                        )
-
+            if live.next_prompt_auto_approve:
+                live.active_prompt_auto_approve = True
+                live.next_prompt_auto_approve = False
+            live.client.start_capture(live.acp_session_id)
+            try:
                 try:
-                    try:
-                        await live.connection.prompt(session_id=live.acp_session_id, prompt=prompt_blocks)
-                    except ValueError as exc:
-                        if "chunk is longer than limit" in str(exc):
-                            raise AgentOutputLimitExceededError from exc
-                        raise
-                    response = await live.client.finish_capture(live.acp_session_id)
-                    response = self._resolve_file_uri_resources(response=response, workspace=live.workspace)
-                    logger.debug("Reply from ACP: %s", log_text_preview(response.text))
-                    return AgentReply(
-                        text=response.text,
-                        images=response.images,
-                        files=response.files,
-                    )
-                finally:
-                    live.active_prompt_auto_approve = False
-                    self._close_session_elicitations(session_id=live.acp_session_id)
+                    await live.connection.prompt(session_id=live.acp_session_id, prompt=prompt_blocks)
+                except ValueError as exc:
+                    if "chunk is longer than limit" in str(exc):
+                        raise AgentOutputLimitExceededError from exc
+                    raise
+                except ConnectionError as exc:
+                    # The agent is unreachable for every method now, not just this turn, and tools it
+                    # had already run may have left side effects. Revive the session and say so rather
+                    # than replaying a half-done turn onto a chat that expects an answer.
+                    await self._revive_session(chat_id=chat_id, stale=live, cause=exc)
+                    return AgentReply(text=AGENT_EXIT_NOTICE)
+                response = await live.client.finish_capture(live.acp_session_id)
+                response = self._resolve_file_uri_resources(response=response, workspace=live.workspace)
+                logger.debug("Reply from ACP: %s", log_text_preview(response.text))
+                return AgentReply(
+                    text=response.text,
+                    images=response.images,
+                    files=response.files,
+                )
+            finally:
+                live.active_prompt_auto_approve = False
+                self._close_session_elicitations(session_id=live.acp_session_id)
+
+    async def _revive_session(
+        self,
+        *,
+        chat_id: int,
+        stale: _LiveSession,
+        cause: BaseException | None = None,
+    ) -> _LiveSession:
+        """Replace a dead agent with a fresh connection, keeping the conversation where possible.
+
+        The old `session_id` is reloaded when the new agent advertises ACP `session/load`, so context
+        survives the crash. Otherwise the chat moves to a new session and the old one stays reachable
+        through `/resume`. Permission mode carries over: a chat that was set to approve must not fall
+        back to asking after an accident.
+        """
+        session_id = stale.acp_session_id
+        with bind_log_context(chat_id=chat_id, session_id=session_id):
+            if cause is None:
+                logger.warning(
+                    "ACP agent exited between turns (returncode=%s); reviving chat_id=%s",
+                    stale.process.returncode,
+                    chat_id,
+                )
+            else:
+                logger.warning("ACP agent died mid-prompt (%s); reviving chat_id=%s", cause, chat_id)
+
+        self._close_session_elicitations(session_id=session_id)
+        self._close_session_permissions(session_id=session_id)
+        await self._shutdown(stale.process)
+        # Drop the corpse first: `load_session`/`new_session` shut down whatever live entry they find.
+        self._live_by_chat.pop(chat_id, None)
+
+        # `Exception` keeps `asyncio.CancelledError` out of these handlers, so a shutdown of the
+        # prompt task still propagates instead of being mistaken for a dead agent.
+        try:
+            await self.load_session(chat_id=chat_id, session_id=session_id, workspace=stale.workspace)
+        except Exception as exc:  # noqa: BLE001
+            with bind_log_context(chat_id=chat_id, session_id=session_id):
+                logger.warning("ACP session could not be reloaded (%s); starting a new session", exc)
+            try:
+                await self.new_session(chat_id=chat_id, workspace=stale.workspace)
+            except Exception as exc:
+                with bind_log_context(chat_id=chat_id, session_id=session_id):
+                    logger.exception("ACP agent could not be restarted for chat_id=%s", chat_id)
+                raise AgentConnectionLostError from exc
+
+        revived = self._live_by_chat[chat_id]
+        revived.permission_mode = stale.permission_mode
+        with bind_log_context(chat_id=chat_id, session_id=revived.acp_session_id):
+            logger.info("ACP session revived for chat_id=%s", chat_id)
+        return revived
+
+    def _close_session_permissions(self, *, session_id: str) -> None:
+        """Stop waiting on approvals the dead agent can no longer act on."""
+        for request_id, pending in list(self._pending_permissions.items()):
+            if pending.acp_session_id != session_id or pending.future.done():
+                continue
+            with bind_log_context(chat_id=pending.chat_id, session_id=session_id):
+                logger.info("Permission request dropped with the dead agent: request_id=%s", request_id)
+            self._pending_permissions.pop(request_id, None)
+            pending.future.set_result(RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled")))
+
+    @staticmethod
+    def _agent_exited(live: _LiveSession) -> bool:
+        return live.process.returncode is not None
 
     def get_workspace(self, *, chat_id: int) -> Path | None:
         session = self._registry.get(chat_id)
@@ -342,7 +441,7 @@ class AcpAgentService:
 
     async def cancel(self, *, chat_id: int) -> bool:
         live = self._live_by_chat.get(chat_id)
-        if live is None:
+        if live is None or self._agent_exited(live):
             return False
 
         await live.connection.cancel(session_id=live.acp_session_id)

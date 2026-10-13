@@ -136,3 +136,11 @@ class ElicitationRequest:
 
 class AgentOutputLimitExceededError(RuntimeError):
     """Raised when the agent emits a stdio line larger than the configured reader limit."""
+
+
+class AgentConnectionLostError(RuntimeError):
+    """Raised when the agent died and the bot could not bring a session back for this chat.
+
+    See also `{py:meth}`telegram_acp_bot.acp.service.AcpAgentService.prompt`, which recovers
+    from a dead agent and only raises this when recovery itself failed.
+    """

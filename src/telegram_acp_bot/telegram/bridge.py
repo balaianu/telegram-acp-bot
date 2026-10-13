@@ -43,6 +43,7 @@ from telegram_acp_bot.acp.models import (
     ActivityMode,
     AgentActivityBlock,
     AgentCommand,
+    AgentConnectionLostError,
     AgentOutputLimitExceededError,
     AgentReply,
     ElicitationOption,
@@ -1928,6 +1929,9 @@ class TelegramBridge:
                 "Agent output exceeded ACP stdio limit. Restart with a higher `--acp-stdio-limit` "
                 "(or `ACP_STDIO_LIMIT`).",
             )
+            return None
+        except AgentConnectionLostError:
+            await self._reply(update, "The agent died and could not be restarted. Try `/new` to start a session.")
             return None
         finally:
             await self._set_prompt_message_context(session_id=session_id, message_id=None)

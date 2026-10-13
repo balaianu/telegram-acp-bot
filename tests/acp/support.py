@@ -36,10 +36,11 @@ from acp.schema import (
     ToolCallStart,
 )
 
-from telegram_acp_bot.acp.service import AcpAgentService, _AcpClient, _PendingPermission
+from telegram_acp_bot.acp.service import AGENT_EXIT_NOTICE, AcpAgentService, _AcpClient, _PendingPermission
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
     AgentCommand,
+    AgentConnectionLostError,
     AgentOutputLimitExceededError,
     AgentReply,
     FilePayload,
@@ -63,6 +64,8 @@ pytestmark = pytest.mark.asyncio
 
 EXPECTED_CAPTURED_FILES = 2
 ACP_STDIO_LIMIT_ERROR = "Separator is found, but chunk is longer than limit"
+CONNECTION_CLOSED_ERROR = "Connection closed"
+AGENT_BINARY_MISSING_ERROR = "agent binary is gone"
 
 
 def make_client() -> _AcpClient:
@@ -241,6 +244,14 @@ class OversizeLineConnection(FakeConnection):
         raise ValueError(ACP_STDIO_LIMIT_ERROR)
 
 
+class ConnectionLossConnection(FakeConnection):
+    """Fake agent whose stdio dies while a prompt is in flight, like a killed process."""
+
+    async def prompt(self, *, session_id: str, prompt: list) -> SimpleNamespace:
+        del session_id, prompt
+        raise ConnectionError(CONNECTION_CLOSED_ERROR)
+
+
 class GenericValueErrorConnection(FakeConnection):
     async def prompt(self, *, session_id: str, prompt: list) -> SimpleNamespace:
         del session_id, prompt
@@ -276,12 +287,16 @@ class NoSessionCapabilitiesConnection(FakeConnection):
 
 __all__ = [
     "ACP_STDIO_LIMIT_ERROR",
+    "AGENT_BINARY_MISSING_ERROR",
+    "AGENT_EXIT_NOTICE",
+    "CONNECTION_CLOSED_ERROR",
     "EXPECTED_CAPTURED_FILES",
     "LOG_TEXT_PREVIEW_MAX_CHARS",
     "AcpAgentService",
     "AgentActivityBlock",
     "AgentCapabilities",
     "AgentCommand",
+    "AgentConnectionLostError",
     "AgentMessageChunk",
     "AgentOutputLimitExceededError",
     "AgentReply",
@@ -290,6 +305,7 @@ __all__ = [
     "AvailableCommand",
     "BlobResourceContents",
     "CommandsConnection",
+    "ConnectionLossConnection",
     "DeniedOutcome",
     "EmbeddedResourceContentBlock",
     "FakeConnection",
