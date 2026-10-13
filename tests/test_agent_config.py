@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from telegram_acp_bot.agent_config import TOKEN_ENV, resolve_specs
+from telegram_acp_bot.agent_config import TOKEN_ENV, agent_tokens, resolve_specs
 from telegram_acp_bot.config_file import ConfigFileError
 from telegram_acp_bot.instance import BotInstanceSpec
 
@@ -306,3 +306,24 @@ def test_agents_merge_mcp_servers_by_name_and_win():
         "shared": {"command": "agent-server"},
         "extra": {"url": "https://example.test/mcp"},
     }
+
+
+def test_undeclared_agents_leave_token_lookup_to_the_caller():
+    assert agent_tokens(config_data={}, env={}, fallback_token=QODER_TOKEN) == []
+
+
+def test_declared_agents_are_paired_with_their_own_tokens():
+    config_data = {"agents": {"qoder": {"telegram": {"bot_token": QODER_TOKEN}}, "claude": {}}}
+
+    assert agent_tokens(config_data=config_data, env={}, fallback_token="0:base") == [
+        ("qoder", QODER_TOKEN),
+        ("claude", "0:base"),
+    ]
+
+
+def test_an_environment_token_pins_its_agent_past_the_config_file():
+    config_data = {"agents": {"claude": {"telegram": {"bot_token": CLAUDE_TOKEN}}}}
+
+    assert agent_tokens(config_data=config_data, env={"TELEGRAM_BOT_TOKEN_CLAUDE": "9:claude"}) == [
+        ("claude", "9:claude")
+    ]

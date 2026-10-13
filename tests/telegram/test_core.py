@@ -37,6 +37,21 @@ async def test_start_and_help():
     assert "/scheduled" in update.message.replies[1]
 
 
+async def test_help_names_the_agent_behind_the_bot():
+    bridge = TelegramBridge(
+        config=make_config(token="TOKEN", allowed_user_ids=[], workspace="."),
+        agent_service=EchoAgentService(SessionRegistry()),
+        agent_name="qoder",
+    )
+    update = make_update(with_message=True)
+
+    await bridge.help(update, make_context())
+
+    assert update.message is not None
+    assert update.message.replies[0].startswith("You are talking to the qoder agent.")
+    assert "Commands:" in update.message.replies[0]
+
+
 async def test_mode_command_sets_verbose_activity_mode():
     bridge = make_bridge()
     update = make_update(with_message=True)

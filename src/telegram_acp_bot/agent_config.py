@@ -65,6 +65,28 @@ def resolve_specs(  # noqa: PLR0913
     return specs
 
 
+def agent_tokens(
+    *, config_data: Mapping[str, Any], env: Mapping[str, str], fallback_token: str = ""
+) -> list[tuple[str, str]]:
+    """Pair every declared agent with the token it should use, in declaration order.
+
+    An empty list means the flat config describes one bot, so callers keep the single
+    token they already resolved. Used by `register-commands`, which needs tokens but no
+    ACP wiring.
+    """
+    declared = config_data.get("agents") or {}
+    return [
+        (name, _token_for(name, section=declared.get(name) or {}, env=env, fallback=fallback_token))
+        for name in declared
+    ]
+
+
+def _token_for(name: str, *, section: Mapping[str, Any], env: Mapping[str, str], fallback: str) -> str:
+    """The token one agent polls with: its own env pin, its section, then the base token."""
+    telegram_cfg = section.get("telegram") or {}
+    return _pinned(env, f"{TOKEN_ENV}_{env_suffix(name)}") or str(telegram_cfg.get("bot_token") or fallback)
+
+
 def _spec_for(  # noqa: PLR0913
     name: str,
     *,
@@ -85,7 +107,7 @@ def _spec_for(  # noqa: PLR0913
 
     return BotInstanceSpec(
         name=name,
-        token=_pinned(env, f"{TOKEN_ENV}_{env_suffix(name)}") or telegram_cfg.get("bot_token") or base.token,
+        token=_token_for(name, section=section, env=env, fallback=base.token),
         allowed_user_ids=_ids_overlay(telegram_cfg.get("allowed_user_ids"), base.allowed_user_ids),
         allowed_usernames=_usernames_overlay(telegram_cfg.get("allowed_usernames"), base.allowed_usernames),
         workspace=acp_cfg.get("workspace", base.workspace),

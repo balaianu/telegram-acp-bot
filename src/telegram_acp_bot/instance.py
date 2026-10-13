@@ -156,6 +156,7 @@ def build_bot_instance(spec: BotInstanceSpec, *, stop_event: asyncio.Event) -> B
         agent_service=service,
         scheduled_task_store=store,
         stop_request=stop_event.set,
+        agent_name=spec.name,
     )
     scheduler = ScheduledTaskScheduler(store=store, runner=ScheduledTaskRunner(bridge.execute_scheduled_task))
     return BotInstance(

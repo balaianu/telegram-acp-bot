@@ -57,6 +57,7 @@ from telegram_acp_bot.acp.models import (
     PromptImage,
     ResumableSession,
 )
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME
 from telegram_acp_bot.logging_context import bind_log_context, log_text_preview
 from telegram_acp_bot.scheduled_tasks import (
     ScheduledTask,
@@ -254,10 +255,14 @@ class TelegramBridge:
         *,
         scheduled_task_store: ScheduledTaskStore | None = None,
         stop_request: Callable[[], None] | None = None,
+        agent_name: str = DEFAULT_AGENT_NAME,
     ) -> None:
         self._config = config
         self._agent_service = agent_service
         self._scheduled_task_store = scheduled_task_store
+        # The agent this bot talks to, named so several bots in one process tell their
+        # users apart.
+        self._agent_name = agent_name
         # Set when a Telegram command asks the whole process to exit, so the runner can
         # tear every instance down instead of only this bot's application.
         self._stop_request = stop_request
@@ -345,13 +350,20 @@ class TelegramBridge:
             "Send a message to start in the default workspace, or use /new [workspace] or /resume [N|workspace].",
         )
 
+    def _help_header(self) -> str:
+        """Name the agent behind this bot, so several bots in one process tell users apart."""
+        if self._agent_name == DEFAULT_AGENT_NAME:
+            return ""
+        return f"You are talking to the {self._agent_name} agent.\n\n"
+
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
         if not await self._require_access(update):
             return
         await self._reply(
             update,
-            "Commands: /new [workspace], /resume [N|workspace], /schedule <time> <prompt>, /scheduled, "
+            f"{self._help_header()}Commands: /new [workspace], /resume [N|workspace], /schedule <time> <prompt>, "
+            "/scheduled, "
             "/mode [normal|compact|verbose], "
             "/session, /cancel, /stop, /clear, /restart [N [workspace]], /cmds, /help",
         )

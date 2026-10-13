@@ -19,7 +19,7 @@ from typing import Any, cast
 from dotenv import load_dotenv
 
 from telegram_acp_bot.acp.models import ActivityMode, PermissionEventOutput, PermissionMode
-from telegram_acp_bot.agent_config import resolve_specs
+from telegram_acp_bot.agent_config import agent_tokens, resolve_specs
 from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME
 from telegram_acp_bot.config_file import ConfigFileError, load_config_file
 from telegram_acp_bot.instance import BotInstanceSpec, build_bot_instance
@@ -440,7 +440,8 @@ def main(args: list[str] | None = None) -> int:
 
     # Sub-command dispatch: each sub-command sets opts.func via set_defaults.
     if hasattr(opts, "func"):
-        return opts.func(opts)
+        agents = agent_tokens(config_data=config_data, env=os.environ, fallback_token=opts.telegram_token)
+        return opts.func(opts, tokens=agents)
 
     log_level = os.getenv("ACP_LOG_LEVEL") or config_data.get("acp", {}).get("log_level", "INFO")
     configure_logging(
