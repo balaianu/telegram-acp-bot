@@ -33,6 +33,7 @@ from telegram_acp_bot.telegram.bot import StatusReactionLevel
 ALLOWED_USER_IDS_ENV = "TELEGRAM_ALLOWED_USER_IDS"
 ALLOWED_USERNAMES_ENV = "TELEGRAM_ALLOWED_USERNAMES"
 SCHEDULE_LANGUAGES_ENV = "ACP_SCHEDULE_LANGUAGES"
+CONFIG_FILE_ENV = "ACP_CONFIG_FILE"
 GROUP_REQUIRE_MENTION_ENV = "ACP_TELEGRAM_GROUP_REQUIRE_MENTION"
 GROUP_MEDIA_QUEUE_ENV = "ACP_TELEGRAM_GROUP_MEDIA_QUEUE"
 STATUS_REACTIONS_ENV = "ACP_TELEGRAM_STATUS_REACTIONS"
@@ -59,9 +60,9 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Path to a JSON config file. If not provided, the bot will automatically "
-            "look for config files in standard locations. Values are overridden by "
-            "environment variables and CLI flags. See docs for the full schema."
+            "Path to a JSON config file. If not provided, ACP_CONFIG_FILE is used when set "
+            "and the bot otherwise looks for config files in standard locations. Values are "
+            "overridden by environment variables and CLI flags. See docs for the full schema."
         ),
     )
     parser.add_argument("--telegram-token", default=os.getenv("TELEGRAM_BOT_TOKEN", ""), help="Telegram bot token")
@@ -371,6 +372,18 @@ def _base_spec(
     )
 
 
+def _pinned_config_path() -> Path | None:
+    """Return the config file named by `ACP_CONFIG_FILE`, if one is set.
+
+    A deployment that keeps every file in one directory can point at its config there
+    instead of repeating `--config` in each call, which is how a service manager and a
+    shell end up reading the same file.
+    """
+
+    pinned = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    return Path(pinned).expanduser() if pinned else None
+
+
 def _find_config_file() -> Path | None:
     """Find a config file from standard locations.
 
@@ -405,7 +418,7 @@ def _load_preparsed_config(
             parser.error("--config must not be empty or whitespace")
         config_path = Path(config_arg).expanduser()
     else:
-        config_path = _find_config_file()
+        config_path = _pinned_config_path() or _find_config_file()
 
     if config_path is None:
         return {}

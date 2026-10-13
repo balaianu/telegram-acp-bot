@@ -685,6 +685,63 @@ def test_main_explicit_config_overrides_auto_discovery(mocker, monkeypatch, tmp_
     assert config.token == "EXPLICIT_TOKEN"
 
 
+def test_main_reads_config_pinned_by_environment(mocker, monkeypatch, tmp_path):
+    """ACP_CONFIG_FILE points at a config outside the discovery locations."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    pinned_config = tmp_path / "deploy" / "config.json"
+    pinned_config.parent.mkdir()
+    pinned_config.write_text('{"telegram": {"bot_token": "PINNED_TOKEN"}, "acp": {"agent_command": "pinned_agent"}}')
+    monkeypatch.setenv("ACP_CONFIG_FILE", str(pinned_config))
+
+    assert main([]) == 0
+    config = mock_run_bot.call_args.args[0][0].config
+    assert config.token == "PINNED_TOKEN"
+
+
+def test_config_flag_overrides_pinned_config_environment(mocker, monkeypatch, tmp_path):
+    """An explicit --config wins over ACP_CONFIG_FILE."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    pinned_config = tmp_path / "pinned.json"
+    pinned_config.write_text('{"telegram": {"bot_token": "PINNED_TOKEN"}, "acp": {"agent_command": "pinned_agent"}}')
+    flag_config = tmp_path / "flag.json"
+    flag_config.write_text('{"telegram": {"bot_token": "FLAG_TOKEN"}, "acp": {"agent_command": "flag_agent"}}')
+    monkeypatch.setenv("ACP_CONFIG_FILE", str(pinned_config))
+
+    assert main(["--config", str(flag_config)]) == 0
+    config = mock_run_bot.call_args.args[0][0].config
+    assert config.token == "FLAG_TOKEN"
+
+
+def test_pinned_config_that_cannot_be_read_stops_the_run(monkeypatch, tmp_path):
+    """A pinned path is used as given, so a bad one is an error rather than a fallback."""
+    monkeypatch.setenv("ACP_CONFIG_FILE", str(tmp_path / "missing.json"))
+
+    with pytest.raises(SystemExit, match="2"):
+        main([])
+
+
+def test_blank_pinned_config_falls_back_to_discovery(mocker, monkeypatch, tmp_path):
+    """A whitespace ACP_CONFIG_FILE means nothing was pinned."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ACP_AGENT_COMMAND", raising=False)
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    config_dir = tmp_path / ".telegram_acp_bot"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        '{"telegram": {"bot_token": "AUTO_TOKEN"}, "acp": {"agent_command": "auto_agent"}}'
+    )
+    monkeypatch.setenv("ACP_CONFIG_FILE", "   ")
+    monkeypatch.chdir(tmp_path)
+
+    assert main([]) == 0
+    config = mock_run_bot.call_args.args[0][0].config
+    assert config.token == "AUTO_TOKEN"
+
+
 def test_main_auto_discovers_config_from_xdg_config_home(mocker, monkeypatch, tmp_path):
     """Automatic discovery respects XDG_CONFIG_HOME before the legacy home path."""
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)

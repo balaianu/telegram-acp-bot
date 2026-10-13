@@ -8,22 +8,32 @@ CLI flags  >  Environment variables  >  Config file  >  Built-in defaults
 
 You can mix layers freely. A typical setup uses a config file for static values and environment variables for secrets that should not live on disk.
 
+(config-file)=
 ## Config file
 
-The bot automatically loads configuration from the following locations (in order):
+The bot loads configuration from the following locations (in order):
 
-1. `./.telegram_acp_bot/config.json` (project-local)
-2. `{envvar}`XDG_CONFIG_HOME`/telegram_acp_bot/config.json` (or `~/.config/telegram_acp_bot/config.json` when unset)
-3. `~/.telegram_acp_bot/config.json` (legacy)
+1. `--config PATH`, or {term}`ACP_CONFIG_FILE` when the flag is absent
+2. `./.telegram_acp_bot/config.json` (project-local)
+3. `{envvar}`XDG_CONFIG_HOME/telegram_acp_bot/config.json` (or `~/.config/telegram_acp_bot/config.json` when unset)
+4. `~/.telegram_acp_bot/config.json` (legacy)
 
-The first readable file is used. You can also specify an explicit path with `--config`.
+The first readable file wins. A pinned path is used as given: when `--config` or
+{term}`ACP_CONFIG_FILE` names a file that cannot be read, the bot stops with that path in
+the message instead of quietly falling back to discovery. Pinning is what lets a deployment
+keep config, state and logs in one directory while a shell and a service manager still read
+the same file.
 
 ```bash
-# Automatic discovery (no --config needed if file exists)
+# Automatic discovery (no --config needed if the file is in a standard location)
 telegram-acp-bot
 
 # Explicit path (overrides automatic discovery)
 telegram-acp-bot --config ./telegram-acp-bot.json
+
+# Same effect for every call in this shell, including sub-commands
+export ACP_CONFIG_FILE=$HOME/.acp/config.json
+telegram-acp-bot register-commands --dry-run
 ```
 
 The file must be a JSON object. All keys are optional. Missing keys fall back to environment variables or built-in defaults.
@@ -229,6 +239,13 @@ ACP_STDIO_LIMIT
 ACP_CONNECT_TIMEOUT
   Timeout in seconds for ACP initialize/new_session handshake.
 
+ACP_CONFIG_FILE
+  Path to the config file, for every call that does not pass `--config`. Useful when a
+  deployment keeps config, state and logs in one directory that is not a discovery
+  location. A path that cannot be read is an error, not a reason to fall back to
+  discovery. `--config` wins when both are present.
+  Example: `ACP_CONFIG_FILE=/home/alice/.acp/config.json`.
+
 ACP_LOG_LEVEL
   Application log level.
   Common values: `DEBUG`, `INFO`, `WARNING`, `ERROR`.
@@ -291,7 +308,7 @@ Key flags that map to config file or environment variable equivalents:
 
 | CLI flag | Env var | Config key |
 |---|---|---|
-| `--config` | — | — |
+| `--config` | `ACP_CONFIG_FILE` | — |
 | `--telegram-token` | `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` |
 | `--allowed-user-id` | `TELEGRAM_ALLOWED_USER_IDS` | `telegram.allowed_user_ids` |
 | `--allowed-username` | `TELEGRAM_ALLOWED_USERNAMES` | `telegram.allowed_usernames` |

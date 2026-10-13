@@ -8,6 +8,12 @@ The bot entrypoint is `telegram-acp-bot`.
 
 ## Arguments
 
+- `--config`
+  Path to the JSON config file to load.
+  Default: {term}`ACP_CONFIG_FILE` when set, otherwise the first file found in a standard
+  location. A pinned path that cannot be read stops the run instead of falling back to
+  discovery; see {ref}`config-file`.
+
 - `--telegram-token`
   Default: {term}`TELEGRAM_BOT_TOKEN`.
   Required if {term}`TELEGRAM_BOT_TOKEN` is not set.
