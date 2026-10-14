@@ -453,6 +453,18 @@ Quiet is not the same as deaf. Every group message the bot receives is recorded 
 agent that is finally addressed can read what it missed with `telegram_list_messages`. Set
 `telegram.group_history_size` to change the cap, or to `0` to keep nothing. See {ref}`mcp-feature-history`.
 
+In a group, the prompt the agent receives is framed for the room. It opens with a reminder that everyone reads
+the answer and that nobody is notified unless the agent names them, then tags the message with its sender:
+`@alice: can you check the build`, or `Alice Nguyễn: ...` when that member has no public username. Private
+chats get neither, because there is only one person to talk to.
+
+That framing is what makes a request like "discuss the deploy with Bob" behave the way you would expect: the
+agent answers Bob, opening its message with `@bob`, instead of replying to whoever typed the request. A reply
+that repeats an `@username` becomes a real Telegram mention, and Telegram notifies that person. The names come
+from the sender tags the agent has seen, and `telegram_list_messages` lists recent senders when it needs one
+that has not spoken to it directly. A member with no public username cannot be mentioned at all, so the agent
+can only address them in plain words.
+
 ## Notes
 
 - Session scope is per Telegram chat.

@@ -129,6 +129,9 @@ Each entry carries the `message_id`, the sender, the text and the moment it was 
 tell who said what before it was pulled into the conversation. Pass `since_message_id` with the
 `newest_message_id` of a previous call to read only what arrived since then.
 
+The sender names here are the same ones the transport puts on every group prompt (`@alice: ...`, plus a
+reminder that only a named reply notifies anyone), so an agent can mention people it never spoke to directly.
+
 The log is capped per chat by `telegram.group_history_size` (default `200`), and it is stored in the same
 private channel state file the rest of the routing state uses, so it survives a restart of the bot. Setting
 the size to `0` stops the recording entirely and the tool then answers with an empty list.

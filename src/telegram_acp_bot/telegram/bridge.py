@@ -189,6 +189,46 @@ def _with_pending_media(text: str, refs: tuple[dict[str, object], ...]) -> str:
     return f"{notice}\n\n{text}" if text else notice
 
 
+def _sender_label(user: object) -> str:
+    """Who sent an update, in the form the agent should address them with.
+
+    A public username wins, because a reply that repeats it becomes a Telegram mention the person is
+    notified about. A member without one falls back to their display name, which identifies them in
+    text but cannot be mentioned.
+    """
+    username = str(getattr(user, "username", None) or "").lstrip("@").strip()
+    if username:
+        return f"@{username}"
+    return str(getattr(user, "full_name", None) or "").strip()
+
+
+def _with_sender_label(text: str, label: str) -> str:
+    """Prefix a group prompt with the sender, so the agent knows who it is answering."""
+
+    if not label:
+        return text
+    return f"{label}: {text}" if text else label
+
+
+GROUP_MENTION_REMINDER = (
+    "Group chat: everyone reads your reply, and nobody is notified unless you name them. "
+    "Open your answer with the @username of the person you are replying to — that is the sender below "
+    "when they asked you, and someone else when the conversation is about them, since a request like "
+    "'discuss this with Bob' wants an answer addressed to Bob, not to the requester. "
+    "`telegram_list_messages` lists the @usernames of recent senders when you need one you have not seen. "
+    "Skip the mention only when the whole group is the audience."
+)
+
+
+def _with_group_context(text: str, label: str) -> str:
+    """Tag a group prompt with its sender and the reminder that only a named reply notifies anyone."""
+
+    tagged = _with_sender_label(text, label)
+    if not tagged:
+        return GROUP_MENTION_REMINDER
+    return f"{GROUP_MENTION_REMINDER}\n\n{tagged}"
+
+
 def _command_name(name: str) -> str:
     """Normalize a command name for comparison, whichever casing the agent published."""
     return name.removeprefix("/").lower()
@@ -1723,6 +1763,8 @@ class TelegramBridge:
         files = await self._extract_prompt_files(message=message, context=context)
         if not text and not images and not files:
             return None
+        if getattr(update.effective_chat, "type", None) in GROUP_CHAT_TYPES:
+            text = _with_group_context(text, _sender_label(update.effective_user))
         if self._config.group_media_queue:
             pending = await self._agent_service.take_pending_media(chat_id=chat_id)
             text = _with_pending_media(text, pending)
@@ -2116,12 +2158,11 @@ class TelegramBridge:
             return
 
         user = update.effective_user
-        raw_name = getattr(user, "username", None) or getattr(user, "full_name", None) or ""
         await self._agent_service.record_group_message(
             chat_id=chat.id,
             message_id=message.message_id,
             sender_id=getattr(user, "id", None),
-            sender_name=raw_name.lstrip("@").strip() or None,
+            sender_name=_sender_label(user).removeprefix("@") or None,
             text=text,
             max_entries=cap,
         )

@@ -18,6 +18,11 @@ GOAL_COMMAND = AgentCommand(name="goal", description="Set or manage a persistent
 RESEARCH_COMMAND = AgentCommand(name="deep-research", description="Research a topic")
 
 
+def group_prompt(command: str) -> str:
+    """A group command as the agent sees it: the mention reminder first, then the command itself."""
+    return f"{bridge_module.GROUP_MENTION_REMINDER}\n\n{command}"
+
+
 def _fake_message(*, text: str | None = None, caption: str | None = None) -> Message:
     return cast(Message, SimpleNamespace(text=text, caption=caption))
 
@@ -245,7 +250,7 @@ async def test_group_button_tap_runs_the_command_without_an_at_mention():
     update, _, _ = make_callback_update("cmd|goal", chat_type="group")
     await bridge.on_agent_command_callback(update, make_context())
 
-    assert [text for text, _ in service.prompts] == ["/goal"]
+    assert [text for text, _ in service.prompts] == [group_prompt("/goal")]
 
 
 async def test_cmds_says_no_commands_are_advertised_before_the_first_prompt():
@@ -417,7 +422,7 @@ async def test_group_command_mentioning_the_bot_is_forwarded_without_the_mention
 
     await bridge.on_agent_command(make_update(text="/goal@echo_bot status", chat_type="group"), make_context())
 
-    assert [text for text, _ in service.prompts] == ["/goal status"]
+    assert [text for text, _ in service.prompts] == [group_prompt("/goal status")]
 
 
 async def test_unmentioned_group_command_caption_queues_its_photo_once():
@@ -442,7 +447,7 @@ async def test_mentioned_group_command_photo_is_forwarded_and_not_queued():
         context,
     )
 
-    assert [text for text, _ in service.prompts] == ["/goal review"]
+    assert [text for text, _ in service.prompts] == [group_prompt("/goal review")]
     assert service.pending_media == []
 
 
