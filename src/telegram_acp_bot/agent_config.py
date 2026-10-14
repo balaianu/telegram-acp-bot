@@ -106,6 +106,7 @@ def _spec_for(
         schedule_languages=_languages_overlay(telegram_cfg.get("schedule_languages"), base.schedule_languages),
         group_require_mention=telegram_cfg.get("group_require_mention", base.group_require_mention),
         group_media_queue=telegram_cfg.get("group_media_queue", base.group_media_queue),
+        group_history_size=int(telegram_cfg.get("group_history_size", base.group_history_size)),
         status_reactions=telegram_cfg.get("status_reactions", base.status_reactions),
         command_parts=command_parts,
         permission_mode=acp_cfg.get("permission_mode", base.permission_mode),

@@ -127,3 +127,26 @@ async def test_normalize_workspace_allows_none() -> None:
 
 async def test_echo_service_does_not_expose_available_commands() -> None:
     assert not hasattr(EchoAgentService(SessionRegistry()), "get_available_commands")
+
+
+async def test_echo_service_records_group_history_until_the_cap() -> None:
+    service = EchoAgentService(SessionRegistry())
+
+    for message_id in (1, 2, 3):
+        await service.record_group_message(
+            chat_id=1,
+            message_id=message_id,
+            sender_id=7,
+            sender_name="alice",
+            text=f"msg {message_id}",
+            max_entries=2,
+        )
+    await service.record_group_message(
+        chat_id=1, message_id=3, sender_id=7, sender_name="alice", text="replay", max_entries=2
+    )
+    await service.record_group_message(
+        chat_id=1, message_id=9, sender_id=7, sender_name="alice", text="ignored", max_entries=0
+    )
+
+    assert [entry["message_id"] for entry in await service.read_group_history(chat_id=1)] == [2, 3]
+    assert await service.read_group_history(chat_id=2) == ()

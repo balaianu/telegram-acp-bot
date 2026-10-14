@@ -14,6 +14,8 @@ TOKEN_ENV = "ACP_TELEGRAM_BOT_TOKEN"
 AGENT_NAME_ENV = "ACP_TELEGRAM_AGENT_NAME"
 STATE_FILE_MODE = 0o600
 MAX_PENDING_MEDIA_PER_CHAT = 20
+MAX_GROUP_HISTORY_PER_CHAT = 200
+GROUP_HISTORY_TEXT_MAX_CHARS = 700
 PER_AGENT_STATE_FILE_NAME = "channel-state.json"
 
 
@@ -162,6 +164,53 @@ def take_pending_media(path: Path, *, chat_id: int) -> list[dict[str, object]]:
     return refs
 
 
+def append_group_message(  # noqa: PLR0913
+    path: Path,
+    *,
+    chat_id: int,
+    message_id: int,
+    sender_id: int | None,
+    sender_name: str | None,
+    text: str,
+    sent_at: str,
+    max_entries: int = MAX_GROUP_HISTORY_PER_CHAT,
+) -> None:
+    """Record one group message for a chat, dropping the oldest beyond the cap.
+
+    A message already on disk is skipped, because Telegram replays pending updates after a
+    restart and the same `message_id` can arrive twice.
+    """
+
+    if max_entries <= 0:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_raw_state(path)
+    payload = _base_state_payload(existing)
+
+    history = _clean_group_history(existing.get("message_history"))
+    entries = history.get(str(chat_id), [])
+    if any(entry["message_id"] == message_id for entry in entries):
+        return
+    entries.append(
+        {
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "sender_name": sender_name,
+            "text": text[:GROUP_HISTORY_TEXT_MAX_CHARS],
+            "sent_at": sent_at,
+        }
+    )
+    history[str(chat_id)] = entries[-max_entries:]
+    payload["message_history"] = history
+    _write_json_atomic(path, payload)
+
+
+def load_group_history(path: Path, *, chat_id: int) -> list[dict[str, object]]:
+    """Return the recorded group messages of one chat, oldest first."""
+
+    return _clean_group_history(_load_raw_state(path).get("message_history")).get(str(chat_id), [])
+
+
 def _base_state_payload(existing: dict[str, object]) -> dict[str, object]:
     """Start a payload with every section that a writer must not silently drop."""
 
@@ -172,6 +221,9 @@ def _base_state_payload(existing: dict[str, object]) -> dict[str, object]:
     pending = _clean_pending_media(existing.get("pending_media"))
     if pending:
         payload["pending_media"] = pending
+    history = _clean_group_history(existing.get("message_history"))
+    if history:
+        payload["message_history"] = history
     prompt_message_ids = _clean_prompt_message_ids(existing.get("prompt_message_ids"))
     if prompt_message_ids:
         payload["prompt_message_ids"] = prompt_message_ids
@@ -206,6 +258,39 @@ def _clean_media_ref(item: object) -> dict[str, object] | None:
         "message_id": message_id if isinstance(message_id, int) else 0,
         "mime_type": mime_type if isinstance(mime_type, str) else None,
         "queued_at": queued_at if isinstance(queued_at, str) else "",
+    }
+
+
+def _clean_group_history(raw: object) -> dict[str, list[dict[str, object]]]:
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[str, list[dict[str, object]]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, list):
+            continue
+        entries = [_clean_history_entry(item) for item in value]
+        kept = [entry for entry in entries if entry is not None]
+        if kept:
+            cleaned[key] = kept
+    return cleaned
+
+
+def _clean_history_entry(item: object) -> dict[str, object] | None:
+    if not isinstance(item, dict):
+        return None
+    message_id = item.get("message_id")
+    text = item.get("text")
+    if not isinstance(message_id, int) or not isinstance(text, str):
+        return None
+    sender_id = item.get("sender_id")
+    sender_name = item.get("sender_name")
+    sent_at = item.get("sent_at")
+    return {
+        "message_id": message_id,
+        "sender_id": sender_id if isinstance(sender_id, int) else None,
+        "sender_name": sender_name if isinstance(sender_name, str) else None,
+        "text": text[:GROUP_HISTORY_TEXT_MAX_CHARS],
+        "sent_at": sent_at if isinstance(sent_at, str) else "",
     }
 
 

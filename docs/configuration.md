@@ -54,6 +54,7 @@ follow the XDG Base Directory specification like any other Linux program.
     "schedule_languages": ["en", "es"],
     "group_require_mention": true,
     "group_media_queue": true,
+    "group_history_size": 200,
     "status_reactions": "minimal"
   },
   "acp": {
@@ -193,6 +194,7 @@ Key flags and their config file equivalents:
 | `--schedule-language` | `telegram.schedule_languages` |
 | `--group-require-mention` | `telegram.group_require_mention` |
 | `--group-media-queue` | `telegram.group_media_queue` |
+| `--group-history-size` | `telegram.group_history_size` |
 | `--status-reactions` | `telegram.status_reactions` |
 | `--agent-command` | `acp.agent_command` |
 | `--agent NAME=COMMAND` | `agents` |

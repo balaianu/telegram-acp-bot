@@ -26,6 +26,7 @@ class EchoAgentService:
         self._session_permission_mode: dict[int, PermissionMode] = {}
         self._next_prompt_auto_approve: dict[int, bool] = {}
         self._pending_media: dict[int, list[dict[str, object]]] = {}
+        self._group_history: dict[int, list[dict[str, object]]] = {}
         self._permission_prompt_handler: Callable[[PermissionRequest], Awaitable[None]] | None = None
         self._activity_event_handler: Callable[[int, AgentActivityBlock], Awaitable[None]] | None = None
 
@@ -123,6 +124,35 @@ class EchoAgentService:
 
     async def take_pending_media(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
         return tuple(self._pending_media.pop(chat_id, []))
+
+    async def record_group_message(  # noqa: PLR0913
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        sender_id: int | None,
+        sender_name: str | None,
+        text: str,
+        max_entries: int,
+    ) -> None:
+        if max_entries <= 0:
+            return
+        entries = self._group_history.setdefault(chat_id, [])
+        if any(entry["message_id"] == message_id for entry in entries):
+            return
+        entries.append(
+            {
+                "message_id": message_id,
+                "sender_id": sender_id,
+                "sender_name": sender_name,
+                "text": text,
+                "sent_at": "echo",
+            }
+        )
+        self._group_history[chat_id] = entries[-max_entries:]
+
+    async def read_group_history(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
+        return tuple(self._group_history.get(chat_id, []))
 
     def get_permission_policy(self, *, chat_id: int) -> PermissionPolicy | None:
         if self._registry.get(chat_id) is None:

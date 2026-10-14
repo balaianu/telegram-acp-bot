@@ -16,12 +16,13 @@ from pathlib import Path
 import pytest
 
 from telegram_acp_bot import get_parser, get_version, main
-from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.mcp.state import MAX_GROUP_HISTORY_PER_CHAT, STATE_FILE_ENV, TOKEN_ENV
 
 CUSTOM_STDIO_LIMIT = 12_345
 CUSTOM_CONNECT_TIMEOUT = 42.5
 CONFIG_FILE_STDIO_LIMIT = 1024
 CONFIG_FILE_CONNECT_TIMEOUT = 5.0
+CUSTOM_GROUP_HISTORY_SIZE = 40
 TWO_AGENTS = 2
 
 BASE_ARGS = ["--telegram-token", "TOKEN", "--agent-command", "agent", "--allowed-user-id", "1"]
@@ -277,6 +278,37 @@ def test_main_group_media_queue_defaults_to_off(mocker):
     assert main(BASE_ARGS) == 0
     config = mock_run_bot.call_args.args[0][0].config
     assert config.group_media_queue is False
+
+
+def test_main_group_history_size_flag_sets_config(mocker):
+    """--group-history-size chooses how many group messages are kept."""
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    assert main([*BASE_ARGS, "--group-history-size", str(CUSTOM_GROUP_HISTORY_SIZE)]) == 0
+    config = mock_run_bot.call_args.args[0][0].config
+    assert config.group_history_size == CUSTOM_GROUP_HISTORY_SIZE
+
+
+def test_main_group_history_size_config_file_sets_config(mocker, tmp_path: Path):
+    """telegram.group_history_size in the config file sets the cap without a flag."""
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    config_path = _write_config(
+        tmp_path,
+        {
+            "telegram": {"bot_token": "T", "allowed_user_ids": [1], "group_history_size": 0},
+            "acp": {"agent_command": "a"},
+        },
+    )
+    assert main(["--config", str(config_path)]) == 0
+    config = mock_run_bot.call_args.args[0][0].config
+    assert config.group_history_size == 0
+
+
+def test_main_group_history_size_defaults_to_the_shared_cap(mocker):
+    """The history log is on by default, at the cap the MCP tool advertises."""
+    mock_run_bot = mocker.patch("telegram_acp_bot.run_bot", return_value=0)
+    assert main(BASE_ARGS) == 0
+    config = mock_run_bot.call_args.args[0][0].config
+    assert config.group_history_size == MAX_GROUP_HISTORY_PER_CHAT
 
 
 def test_main_status_reactions_flag_sets_config(mocker):

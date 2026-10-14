@@ -111,6 +111,27 @@ def test_telegram_group_media_queue_not_boolean(tmp_path: Path) -> None:
         load_config_file(write_config(tmp_path, {"telegram": {"group_media_queue": "yes"}}))
 
 
+def test_telegram_group_history_size_not_integer(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.group_history_size' must be a non-negative integer"):
+        load_config_file(write_config(tmp_path, {"telegram": {"group_history_size": "200"}}))
+
+
+def test_telegram_group_history_size_rejects_boolean(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.group_history_size' must be a non-negative integer"):
+        load_config_file(write_config(tmp_path, {"telegram": {"group_history_size": True}}))
+
+
+def test_telegram_group_history_size_rejects_a_negative_cap(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.group_history_size' must be a non-negative integer"):
+        load_config_file(write_config(tmp_path, {"telegram": {"group_history_size": -1}}))
+
+
+def test_telegram_group_history_size_accepts_zero(tmp_path: Path) -> None:
+    assert load_config_file(write_config(tmp_path, {"telegram": {"group_history_size": 0}}))["telegram"] == {
+        "group_history_size": 0
+    }
+
+
 def test_telegram_status_reactions_unknown_level(tmp_path: Path) -> None:
     with pytest.raises(ConfigFileError, match=r"'telegram\.status_reactions' must be one of"):
         load_config_file(write_config(tmp_path, {"telegram": {"status_reactions": "loud"}}))

@@ -10,6 +10,7 @@ import pytest
 from telegram_acp_bot.agent_config import agent_tokens, resolve_specs
 from telegram_acp_bot.config_file import ConfigFileError
 from telegram_acp_bot.instance import BotInstanceSpec
+from telegram_acp_bot.mcp.state import MAX_GROUP_HISTORY_PER_CHAT
 
 QODER_TOKEN = "111:qoder"
 CLAUDE_TOKEN = "222:claude"
@@ -17,6 +18,7 @@ BASE_DB = Path("/base/scheduled-tasks.sqlite3")
 BASE_STATE = Path("/base/channel-state.json")
 AGENT_STDIO_LIMIT = 1024
 AGENT_CONNECT_TIMEOUT = 5.0
+AGENT_GROUP_HISTORY_SIZE = 40
 TEST_PID = 4242
 
 
@@ -32,6 +34,7 @@ def base_spec(**overrides: object) -> BotInstanceSpec:
         schedule_languages=("en", "es"),
         group_require_mention=False,
         group_media_queue=False,
+        group_history_size=MAX_GROUP_HISTORY_PER_CHAT,
         status_reactions="off",
         command_parts=("fake-agent",),
         permission_mode="ask",
@@ -89,6 +92,7 @@ def test_an_agent_inherits_every_field_it_does_not_override():
     assert spec.stdio_limit == base.stdio_limit
     assert spec.connect_timeout == base.connect_timeout
     assert spec.status_reactions == base.status_reactions
+    assert spec.group_history_size == base.group_history_size
     assert spec.allow_path_inputs == base.allow_path_inputs
 
 
@@ -103,6 +107,7 @@ def test_an_agent_overrides_the_fields_it_names():
                     "schedule_languages": ["VI"],
                     "group_require_mention": True,
                     "group_media_queue": True,
+                    "group_history_size": AGENT_GROUP_HISTORY_SIZE,
                     "status_reactions": "minimal",
                 },
                 "acp": {
@@ -126,6 +131,7 @@ def test_an_agent_overrides_the_fields_it_names():
     assert spec.schedule_languages == ("vi",)
     assert spec.group_require_mention is True
     assert spec.group_media_queue is True
+    assert spec.group_history_size == AGENT_GROUP_HISTORY_SIZE
     assert spec.status_reactions == "minimal"
     assert spec.command_parts == ("qodercli", "--acp", "--yolo")
     assert spec.workspace == "~/other"

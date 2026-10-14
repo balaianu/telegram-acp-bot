@@ -22,7 +22,7 @@ from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME
 from telegram_acp_bot.config_file import ConfigFileError, discover_config_path, load_config_file
 from telegram_acp_bot.instance import BotInstanceSpec, build_bot_instance
 from telegram_acp_bot.logging_context import configure_logging
-from telegram_acp_bot.mcp.state import resolve_state_file
+from telegram_acp_bot.mcp.state import MAX_GROUP_HISTORY_PER_CHAT, resolve_state_file
 from telegram_acp_bot.register_commands import add_register_commands_subparser
 from telegram_acp_bot.runner import run_bot
 from telegram_acp_bot.scheduled_tasks import default_scheduled_tasks_db_path
@@ -171,6 +171,16 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--group-history-size",
+        type=int,
+        default=MAX_GROUP_HISTORY_PER_CHAT,
+        help=(
+            "How many recent group messages to keep per chat for the `telegram_list_messages` tool. "
+            f"Default {MAX_GROUP_HISTORY_PER_CHAT}; 0 disables the history log. "
+            "Also set by `telegram.group_history_size`."
+        ),
+    )
+    parser.add_argument(
         "--status-reactions",
         default="off",
         choices=["off", "minimal"],
@@ -225,6 +235,8 @@ def _apply_config_file_defaults(
         updates["acp_stdio_limit"] = int(acp_cfg["stdio_limit"])
     if "connect_timeout" in acp_cfg:
         updates["acp_connect_timeout"] = float(acp_cfg["connect_timeout"])
+    if "group_history_size" in tg:
+        updates["group_history_size"] = int(tg["group_history_size"])
 
     if updates:
         _set_parser_defaults(parser, updates)
@@ -332,6 +344,7 @@ def _base_spec(
         or bool(config_data.get("telegram", {}).get("group_require_mention", False)),
         group_media_queue=opts.group_media_queue
         or bool(config_data.get("telegram", {}).get("group_media_queue", False)),
+        group_history_size=int(opts.group_history_size),
         status_reactions=cast("StatusReactionLevel", opts.status_reactions),
         command_parts=tuple(command_parts),
         permission_mode=cast("PermissionMode", opts.permission_mode),

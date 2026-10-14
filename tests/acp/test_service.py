@@ -9,6 +9,7 @@ import signal
 from tests.acp.support import *
 
 PROMPT_MESSAGE_ID = 42
+GROUP_HISTORY_CAP = 200
 
 
 async def test_new_session_creates_missing_workspace(tmp_path: Path):
@@ -341,6 +342,45 @@ async def test_pending_media_helpers_without_state_file_are_noop(tmp_path: Path)
 
     assert await service.take_pending_media(chat_id=9) == ()
     assert not (tmp_path / "channel-state.json").exists()
+
+
+async def test_record_group_message_then_read_it_back(tmp_path: Path):
+    state_file = tmp_path / "channel-state.json"
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], channel_state_file=state_file)
+
+    await service.record_group_message(
+        chat_id=9,
+        message_id=PROMPT_MESSAGE_ID,
+        sender_id=7,
+        sender_name="alice",
+        text="chuyện trong group",
+        max_entries=GROUP_HISTORY_CAP,
+    )
+    entries = await service.read_group_history(chat_id=9)
+
+    assert [entry["text"] for entry in entries] == ["chuyện trong group"]
+    assert entries[0]["message_id"] == PROMPT_MESSAGE_ID
+    assert entries[0]["sent_at"] != ""
+
+
+async def test_group_history_helpers_without_state_file_are_noop(tmp_path: Path):
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[])
+
+    await service.record_group_message(
+        chat_id=9, message_id=1, sender_id=7, sender_name=None, text="x", max_entries=GROUP_HISTORY_CAP
+    )
+
+    assert await service.read_group_history(chat_id=9) == ()
+    assert not (tmp_path / "channel-state.json").exists()
+
+
+async def test_record_group_message_with_a_zero_cap_writes_nothing(tmp_path: Path):
+    state_file = tmp_path / "channel-state.json"
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], channel_state_file=state_file)
+
+    await service.record_group_message(chat_id=9, message_id=1, sender_id=7, sender_name=None, text="x", max_entries=0)
+
+    assert not state_file.exists()
 
 
 async def test_load_session_rejects_when_capability_is_false(tmp_path: Path):

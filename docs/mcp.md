@@ -25,13 +25,15 @@ ACP remains responsible for the conversational session with the agent. MCP is th
 
 ## What The Tools Enable
 
-The built-in server currently exposes five tools.
+The built-in server currently exposes six tools.
 
 `telegram_channel_info` is a lightweight capability probe. It lets the agent confirm what this Telegram channel integration can currently do.
 
 `telegram_send_attachment` lets the agent deliver a file or image to the current Telegram chat. This is the tool behind flows like “send me the generated screenshot” or “upload the review artifact”.
 
 `telegram_fetch_attachment` lets the agent download media that Telegram announced as pending, by `file_id`, into its own workspace. This is the counterpart of the lazy inbound path described under `telegram.group_media_queue`.
+
+`telegram_list_messages` lets the agent read the group messages it never answered. The bot records each incoming group message into a short capped log, so this is how the agent catches up on what the room was saying before it was addressed. See {ref}`mcp-feature-history`.
 
 `telegram_set_message_reaction` lets the agent add a standard Telegram emoji reaction to a message in the current chat. This is the tool behind lightweight moments such as “acknowledge that briefly” or “react instead of sending a noisy one-line reply”.
 
@@ -109,6 +111,37 @@ telegram_fetch_attachment(
 The download lands inside the agent workspace, by default under `.telegram-media/`, and the result reports the local `path`. Pass `dest` to choose a meaningful name such as `invoices/hoa-don.pdf`; a `dest` that resolves outside the workspace is rejected. Queued references are announced once and capped per chat, so a long run of unmentioned photos cannot grow the state file without bound.
 
 A queued reference is a promise with a shelf life, not an archive. Telegram keeps a media file downloadable by the bot for roughly an hour after it last moved through the API, and the hosted Bot API refuses downloads of files larger than 20 MB. The announcement therefore carries the `queued_at` timestamp of each reference so the agent can judge how stale it is, and a fetch that arrives after the window returns an explicit `download failed` error naming the `file_id`. If a photo matters later than that, ask the sender to post it again.
+
+(mcp-feature-history)=
+## Read Recent Group Messages
+
+A bot that only answers when it is @mentioned still hears the rest of the room. `telegram_list_messages`
+gives the agent a way to use that: every group message the bot receives is appended to a short log for its
+chat, and the tool reads the log back, newest messages last.
+
+```text
+telegram_list_messages(
+  limit=20
+)
+```
+
+Each entry carries the `message_id`, the sender, the text and the moment it was recorded, so the agent can
+tell who said what before it was pulled into the conversation. Pass `since_message_id` with the
+`newest_message_id` of a previous call to read only what arrived since then.
+
+The log is capped per chat by `telegram.group_history_size` (default `200`), and it is stored in the same
+private channel state file the rest of the routing state uses, so it survives a restart of the bot. Setting
+the size to `0` stops the recording entirely and the tool then answers with an empty list.
+
+Two limits are worth stating plainly. Telegram, not this bot, decides which group messages reach the bot at
+all: with the default bot privacy mode only commands, replies and @mentions are delivered, so a bot that must
+follow a group conversation needs privacy mode disabled or a seat as an administrator. And the log starts
+where the bot starts — nothing older than the first recorded message can be read, because the Telegram Bot
+API offers no way to fetch messages a bot never received.
+
+Because the log also holds messages from people who are not on the allowlist, treat it as the room's own
+conversation: it is readable by whichever agent the chat is bound to, so set `telegram.group_history_size`
+to `0` in a group where that is not acceptable.
 
 (mcp-feature-reactions)=
 ## React To Messages

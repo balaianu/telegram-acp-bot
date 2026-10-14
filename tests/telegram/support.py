@@ -458,6 +458,31 @@ class ResumeService:
 class ImplicitSessionServiceBase:
     def __init__(self) -> None:
         self._workspace_by_chat: dict[int, Path] = {}
+        self.group_messages: list[dict[str, object]] = []
+
+    async def record_group_message(  # noqa: PLR0913
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        sender_id: int | None,
+        sender_name: str | None,
+        text: str,
+        max_entries: int,
+    ) -> None:
+        del max_entries
+        self.group_messages.append(
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "sender_id": sender_id,
+                "sender_name": sender_name,
+                "text": text,
+            }
+        )
+
+    async def read_group_history(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
+        return tuple(message for message in self.group_messages if message["chat_id"] == chat_id)
 
     def get_workspace(self, *, chat_id: int):
         return self._workspace_by_chat.get(chat_id)

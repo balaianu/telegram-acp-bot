@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from telegram_acp_bot.acp.models import PermissionEventOutput, PermissionMode
 from telegram_acp_bot.instance import BotInstanceSpec, build_bot_instance
-from telegram_acp_bot.mcp.state import default_state_file
+from telegram_acp_bot.mcp.state import MAX_GROUP_HISTORY_PER_CHAT, default_state_file
 from telegram_acp_bot.runner import run_bot
 from telegram_acp_bot.scheduled_tasks import default_scheduled_tasks_db_path
 
@@ -145,6 +145,7 @@ def main() -> int:
         schedule_languages=("en",),
         group_require_mention=False,
         group_media_queue=False,
+        group_history_size=MAX_GROUP_HISTORY_PER_CHAT,
         status_reactions="off",
         command_parts=tuple(command_parts),
         permission_mode=cast(PermissionMode, args.permission_mode),

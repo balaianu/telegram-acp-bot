@@ -431,6 +431,28 @@ Two things worth knowing before you rely on it:
   one agent while you debug the other.
 - `/restart` re-launches the process, so it restarts every agent, not only the bot you asked.
 
+## 15. Follow a group chat
+
+Put the bot in a group and it can take part in the conversation, not just answer direct orders.
+
+Telegram decides what the bot is allowed to hear. With the default bot privacy mode a group bot only
+receives commands, replies and @mentions, so to let it follow the whole conversation either turn privacy
+off with @BotFather (`/setprivacy` → `Disable`, then remove and re-add the bot to the group) or make it an
+administrator.
+
+Then decide how loudly it should speak:
+
+```bash
+telegram-acp-bot --group-require-mention
+```
+
+With that flag the bot stays quiet until someone @mentions it or replies to one of its messages; without it,
+the bot answers every group message. Private chats are unaffected either way.
+
+Quiet is not the same as deaf. Every group message the bot receives is recorded in a short per-chat log, so an
+agent that is finally addressed can read what it missed with `telegram_list_messages`. Set
+`telegram.group_history_size` to change the cap, or to `0` to keep nothing. See {ref}`mcp-feature-history`.
+
 ## Notes
 
 - Session scope is per Telegram chat.

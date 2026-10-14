@@ -43,6 +43,7 @@ class BotInstanceSpec:
     schedule_languages: tuple[str, ...]
     group_require_mention: bool
     group_media_queue: bool
+    group_history_size: int
     status_reactions: StatusReactionLevel
     command_parts: tuple[str, ...]
     permission_mode: PermissionMode
@@ -163,6 +164,7 @@ def build_bot_instance(spec: BotInstanceSpec, *, stop_event: asyncio.Event) -> B
         group_require_mention=spec.group_require_mention,
         group_media_queue=spec.group_media_queue,
         status_reactions=spec.status_reactions,
+        group_history_size=spec.group_history_size,
     )
     service = AcpAgentService(
         SessionRegistry(),

@@ -1381,6 +1381,8 @@ class TelegramBridge:
 
     async def on_agent_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Forward a slash command the agent advertised straight into the normal prompt pipeline."""
+        await self._record_group_message(update)
+
         if not await self._require_access(update):
             return
 
@@ -1459,6 +1461,8 @@ class TelegramBridge:
         *,
         prompt_text: str | None = None,
     ) -> None:
+        await self._record_group_message(update)
+
         if not await self._require_access(update):
             return
 
@@ -2093,6 +2097,34 @@ class TelegramBridge:
                 ]
             )
         return InlineKeyboardMarkup(rows)
+
+    async def _record_group_message(self, update: Update) -> None:
+        """Park one group message in the chat's capped history, ahead of every gate.
+
+        Recording runs before the allowlist and the mention rule, so the history the agent reads
+        back is the room as it happened rather than only the messages this bot chose to answer.
+        """
+        cap = self._config.group_history_size
+        if cap <= 0:
+            return
+        chat = update.effective_chat
+        message = update.message
+        if chat is None or message is None or getattr(chat, "type", None) not in GROUP_CHAT_TYPES:
+            return
+        text = message.text or message.caption or ""
+        if not text.strip():
+            return
+
+        user = update.effective_user
+        raw_name = getattr(user, "username", None) or getattr(user, "full_name", None) or ""
+        await self._agent_service.record_group_message(
+            chat_id=chat.id,
+            message_id=message.message_id,
+            sender_id=getattr(user, "id", None),
+            sender_name=raw_name.lstrip("@").strip() or None,
+            text=text,
+            max_entries=cap,
+        )
 
     async def _require_access(self, update: Update) -> bool:
         allowed_ids = self._config.allowed_user_ids

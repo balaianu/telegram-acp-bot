@@ -55,6 +55,11 @@ The bot entrypoint is `telegram-acp-bot`.
   `file_id` reference and announced to the agent on its next answered prompt, where
   `telegram_fetch_attachment` can download it on demand. Needs `--group-require-mention`.
 
+- `--group-history-size`
+  Default: `telegram.group_history_size` in the config file, then `200`.
+  Number of recent group messages the bot keeps per chat for `telegram_list_messages`.
+  Set it to `0` to stop recording group chat altogether. See {ref}`mcp-feature-history`.
+
 - `--status-reactions`
   Default: `telegram.status_reactions` in the config file.
   Allowed values: `off`, `minimal`.

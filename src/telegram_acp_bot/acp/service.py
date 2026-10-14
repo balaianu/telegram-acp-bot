@@ -74,7 +74,9 @@ from telegram_acp_bot.acp.session import _LiveSession, _PendingElicitation, _Pen
 from telegram_acp_bot.core.session_registry import SessionRegistry
 from telegram_acp_bot.logging_context import bind_log_context, log_text_preview
 from telegram_acp_bot.mcp.state import (
+    append_group_message,
     append_pending_media,
+    load_group_history,
     load_last_session_id,
     load_session_chat_map,
     save_last_session_id,
@@ -1071,6 +1073,43 @@ class AcpAgentService:
         async with self._channel_state_lock:
             refs = await asyncio.to_thread(take_pending_media, self._channel_state_file, chat_id=chat_id)
         return tuple(refs)
+
+    async def record_group_message(  # noqa: PLR0913
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        sender_id: int | None,
+        sender_name: str | None,
+        text: str,
+        max_entries: int,
+    ) -> None:
+        """Keep one group message on disk so the agent can read the room later."""
+
+        if self._channel_state_file is None or max_entries <= 0:
+            return
+        sent_at = datetime.now(UTC).isoformat(timespec="seconds")
+        async with self._channel_state_lock:
+            await asyncio.to_thread(
+                append_group_message,
+                self._channel_state_file,
+                chat_id=chat_id,
+                message_id=message_id,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                text=text,
+                sent_at=sent_at,
+                max_entries=max_entries,
+            )
+
+    async def read_group_history(self, *, chat_id: int) -> tuple[dict[str, object], ...]:
+        """Return the recorded group messages of a chat, oldest first."""
+
+        if self._channel_state_file is None:
+            return ()
+        async with self._channel_state_lock:
+            entries = await asyncio.to_thread(load_group_history, self._channel_state_file, chat_id=chat_id)
+        return tuple(entries)
 
     async def set_prompt_message_context(self, *, session_id: str, message_id: int | None) -> None:
         """Persist the active Telegram prompt message id for the current turn.

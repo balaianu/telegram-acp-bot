@@ -123,6 +123,19 @@ class AgentService(Protocol):
 
     async def take_pending_media(self, *, chat_id: int) -> tuple[dict[str, object], ...]: ...
 
+    async def record_group_message(  # noqa: PLR0913
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        sender_id: int | None,
+        sender_name: str | None,
+        text: str,
+        max_entries: int,
+    ) -> None: ...
+
+    async def read_group_history(self, *, chat_id: int) -> tuple[dict[str, object], ...]: ...
+
     def get_permission_policy(self, *, chat_id: int) -> PermissionPolicy | None: ...
 
     async def set_session_permission_mode(self, *, chat_id: int, mode: PermissionMode) -> bool: ...

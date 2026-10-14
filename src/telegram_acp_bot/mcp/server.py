@@ -27,6 +27,11 @@ from telegram_acp_bot.mcp.tools.attachments import (
     telegram_fetch_attachment,
     telegram_send_attachment,
 )
+from telegram_acp_bot.mcp.tools.history import (
+    DEFAULT_HISTORY_LIMIT,
+    register_history_tools,
+    telegram_list_messages,
+)
 from telegram_acp_bot.mcp.tools.reactions import (
     STANDARD_REACTION_EMOJI_LIST,
     STANDARD_REACTION_EMOJIS,
@@ -53,6 +58,7 @@ _load_attachment_bytes = load_attachment_bytes
 
 __all__ = [
     "ALLOW_PATH_ENV",
+    "DEFAULT_HISTORY_LIMIT",
     "DEFAULT_MEDIA_DIRNAME",
     "MEDIA_OUTSIDE_WORKSPACE_ERROR",
     "MISSING_SCHEDULED_DB_ERROR",
@@ -80,6 +86,7 @@ __all__ = [
     "mcp",
     "parse_utc_timestamp",
     "register_attachment_tools",
+    "register_history_tools",
     "register_reaction_tools",
     "register_scheduling_tools",
     "resolve_media_target",
@@ -87,6 +94,7 @@ __all__ = [
     "schedule_task",
     "telegram_channel_info",
     "telegram_fetch_attachment",
+    "telegram_list_messages",
     "telegram_send_attachment",
     "telegram_set_message_reaction",
     "timedelta",
@@ -113,12 +121,14 @@ def telegram_channel_info() -> dict[str, object]:
         "supports_message_reactions": True,
         "supported_reaction_emojis": STANDARD_REACTION_EMOJI_LIST,
         "supports_scheduled_tasks": True,
+        "supports_group_history": True,
         "supports_followup_buttons": False,
         "status": "active",
     }
 
 
 register_attachment_tools(mcp)
+register_history_tools(mcp)
 register_reaction_tools(mcp)
 register_scheduling_tools(mcp)
 

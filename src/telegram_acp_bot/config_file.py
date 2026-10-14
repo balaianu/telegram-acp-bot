@@ -124,6 +124,7 @@ def _validate_telegram_section(tg: dict[str, Any], path: Path, where: str = "") 
             raise _err(path, "'telegram.schedule_languages' must be a list of strings", where)
     _require_optional_bool(tg, path, "group_require_mention", where)
     _require_optional_bool(tg, path, "group_media_queue", where)
+    _require_optional_non_negative_int(tg, path, "group_history_size", where)
     if "status_reactions" in tg and tg["status_reactions"] not in _VALID_STATUS_REACTION_LEVELS:
         raise _err(
             path,
@@ -138,6 +139,16 @@ def _require_optional_bool(
 ) -> None:
     if key in section and not isinstance(section[key], bool):
         raise _err(path, f"'{label}.{key}' must be a boolean", where)
+
+
+def _require_optional_non_negative_int(
+    section: dict[str, Any], path: Path, key: str, where: str = "", *, label: str = "telegram"
+) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise _err(path, f"'{label}.{key}' must be a non-negative integer", where)
 
 
 def _validate_acp_section(acp: dict[str, Any], path: Path, where: str = "") -> None:
