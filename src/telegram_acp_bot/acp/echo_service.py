@@ -138,17 +138,19 @@ class EchoAgentService:
         if max_entries <= 0:
             return
         entries = self._group_history.setdefault(chat_id, [])
-        if any(entry["message_id"] == message_id for entry in entries):
-            return
-        entries.append(
-            {
-                "message_id": message_id,
-                "sender_id": sender_id,
-                "sender_name": sender_name,
-                "text": text,
-                "sent_at": "echo",
-            }
-        )
+        entry: dict[str, object] = {
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "sender_name": sender_name,
+            "text": text,
+            "sent_at": "echo",
+        }
+        for index, stored in enumerate(entries):
+            if stored["message_id"] == message_id:
+                entries[index] = entry
+                break
+        else:
+            entries.append(entry)
         self._group_history[chat_id] = entries[-max_entries:]
 
     async def read_group_history(self, *, chat_id: int) -> tuple[dict[str, object], ...]:

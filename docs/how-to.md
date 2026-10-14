@@ -465,6 +465,13 @@ from the sender tags the agent has seen, and `telegram_list_messages` lists rece
 that has not spoken to it directly. A member with no public username cannot be mentioned at all, so the agent
 can only address them in plain words.
 
+The mention rule reads the message a turn ends on, not only the one it started with: editing a group message
+to add `@yourbot` wakes the bot, and a `compact` answer that replaces its own status bubble is seen by the rest
+of the room in its final form. Two of your own bots in one group hear each other the same way once Telegram
+allows bot-to-bot traffic (BotFather → the bot → Bot-to-Bot Communication Mode, plus privacy mode off or admin
+rights), and each hears the other under its `@username` — so both are on the allowlist if you want them to
+answer one another.
+
 ## Notes
 
 - Session scope is per Telegram chat.

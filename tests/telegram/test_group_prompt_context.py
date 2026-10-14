@@ -20,6 +20,51 @@ def prompted(service: AgentCommandsService) -> str:
     return service.prompts[0][0]
 
 
+def make_edit_update(
+    *, text: str, message_id: int = 9, chat_type: str = "group", username: str | None = None, user_id: int = 7
+):
+    """An update Telegram delivers as `edited_message`, where `update.message` is None."""
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=user_id, username=username),
+        effective_chat=SimpleNamespace(id=100, type=chat_type),
+        message=None,
+        effective_message=DummyMessage(text, message_id=message_id),
+    )
+
+
+async def test_an_edited_group_message_that_mentions_the_bot_is_answered():
+    service = AgentCommandsService(None)
+    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".", group_require_mention=True)
+    bridge = TelegramBridge(config=config, agent_service=cast(AgentService, service))
+
+    await bridge.on_message(make_edit_update(text="@echo_bot trả lời giúp"), make_context())
+
+    assert len(service.prompts) == 1
+    assert prompted(service).endswith("@echo_bot trả lời giúp")
+
+
+async def test_an_edited_group_message_without_a_mention_stays_quiet():
+    service = AgentCommandsService(None)
+    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".", group_require_mention=True)
+    bridge = TelegramBridge(config=config, agent_service=cast(AgentService, service))
+
+    await bridge.on_message(make_edit_update(text="sửa lại cho đúng chính tả"), make_context())
+
+    assert service.prompts == []
+    assert [entry["text"] for entry in service.group_messages] == ["sửa lại cho đúng chính tả"]
+
+
+async def test_an_edit_rewrites_one_history_entry_instead_of_adding_a_second():
+    service = EchoAgentService(SessionRegistry())
+    config = make_config(token="TOKEN", allowed_user_ids=[], workspace=".")
+    bridge = TelegramBridge(config=config, agent_service=service)
+
+    await bridge.on_message(make_edit_update(text="⚙️ đang chạy", message_id=42), make_context())
+    await bridge.on_message(make_edit_update(text="✅ xong rồi", message_id=42), make_context())
+
+    assert [entry["text"] for entry in await service.read_group_history(chat_id=100)] == ["✅ xong rồi"]
+
+
 async def test_group_prompt_arrives_tagged_with_the_sender_username():
     bridge, service = make_context_bridge()
 

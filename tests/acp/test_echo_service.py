@@ -149,4 +149,5 @@ async def test_echo_service_records_group_history_until_the_cap() -> None:
     )
 
     assert [entry["message_id"] for entry in await service.read_group_history(chat_id=1)] == [2, 3]
+    assert [entry["text"] for entry in await service.read_group_history(chat_id=1)] == ["msg 2", "replay"]
     assert await service.read_group_history(chat_id=2) == ()

@@ -129,6 +129,11 @@ Each entry carries the `message_id`, the sender, the text and the moment it was 
 tell who said what before it was pulled into the conversation. Pass `since_message_id` with the
 `newest_message_id` of a previous call to read only what arrived since then.
 
+An edit rewrites the entry it belongs to rather than adding a new one, so a message stays in the log exactly
+once and always shows its last version. That matters most in `compact` activity mode, where the final answer
+replaces the in-progress status bubble: the bubble and the answer are one `message_id`, and the log keeps the
+answer.
+
 The sender names here are the same ones the transport puts on every group prompt (`@alice: ...`, plus a
 reminder that only a named reply notifies anyone), so an agent can mention people it never spoke to directly.
 

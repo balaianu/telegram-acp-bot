@@ -61,13 +61,15 @@ def test_append_group_message_then_load_it(tmp_path: Path):
     }
 
 
-def test_append_group_message_skips_a_message_already_recorded(tmp_path: Path):
+def test_append_group_message_rewrites_a_message_already_recorded(tmp_path: Path):
     state_file = tmp_path / "state.json"
-    record(state_file, message_id=1, text="lần đầu")
-    record(state_file, message_id=1, text="Telegram replay lại")
+    record(state_file, message_id=1, text="⚙️ đang chạy")
+
+    record(state_file, message_id=1, text="✅ xong rồi")
 
     entries = load_group_history(state_file, chat_id=TEST_HISTORY_CHAT_ID)
-    assert [entry["text"] for entry in entries] == ["lần đầu"]
+    assert [entry["text"] for entry in entries] == ["✅ xong rồi"]
+    assert entries[0]["sent_at"] == TEST_HISTORY_SENT_AT
 
 
 def test_append_group_message_drops_the_oldest_beyond_the_cap(tmp_path: Path):

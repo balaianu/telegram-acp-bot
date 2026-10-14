@@ -177,8 +177,8 @@ def append_group_message(  # noqa: PLR0913
 ) -> None:
     """Record one group message for a chat, dropping the oldest beyond the cap.
 
-    A message already on disk is skipped, because Telegram replays pending updates after a
-    restart and the same `message_id` can arrive twice.
+    A `message_id` already on disk is rewritten in place instead of appended: Telegram replays
+    pending updates after a restart, and an edited message must not take a second slot in the log.
     """
 
     if max_entries <= 0:
@@ -189,17 +189,20 @@ def append_group_message(  # noqa: PLR0913
 
     history = _clean_group_history(existing.get("message_history"))
     entries = history.get(str(chat_id), [])
-    if any(entry["message_id"] == message_id for entry in entries):
-        return
-    entries.append(
-        {
-            "message_id": message_id,
-            "sender_id": sender_id,
-            "sender_name": sender_name,
-            "text": text[:GROUP_HISTORY_TEXT_MAX_CHARS],
-            "sent_at": sent_at,
-        }
-    )
+    entry = {
+        "message_id": message_id,
+        "sender_id": sender_id,
+        "sender_name": sender_name,
+        "text": text[:GROUP_HISTORY_TEXT_MAX_CHARS],
+        "sent_at": sent_at,
+    }
+    for index, stored in enumerate(entries):
+        if stored["message_id"] == message_id:
+            entry["sent_at"] = stored["sent_at"]
+            entries[index] = entry
+            break
+    else:
+        entries.append(entry)
     history[str(chat_id)] = entries[-max_entries:]
     payload["message_history"] = history
     _write_json_atomic(path, payload)

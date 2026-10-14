@@ -2145,12 +2145,15 @@ class TelegramBridge:
 
         Recording runs before the allowlist and the mention rule, so the history the agent reads
         back is the room as it happened rather than only the messages this bot chose to answer.
+        An edit rewrites the entry of the message it changed, so the log holds the last version of
+        anything the room saw once, which is how a compact answer that replaces its own status
+        bubble still reaches the agent.
         """
         cap = self._config.group_history_size
         if cap <= 0:
             return
         chat = update.effective_chat
-        message = update.message
+        message = self._anchor_message(update)
         if chat is None or message is None or getattr(chat, "type", None) not in GROUP_CHAT_TYPES:
             return
         text = message.text or message.caption or ""
@@ -2197,12 +2200,15 @@ class TelegramBridge:
 
         Implements {py:attr}`BotConfig.group_require_mention`: private chats always answer,
         group chats only when the bot is @mentioned (or the message replies to the bot).
+
+        The anchor message is read rather than `update.message`, because a compact-mode answer
+        arrives as an edit of the status bubble and would otherwise look like an unaddressed post.
         """
         chat = update.effective_chat
         if getattr(chat, "type", None) not in GROUP_CHAT_TYPES:
             return False
 
-        message = update.message
+        message = self._anchor_message(update)
         handle = _bot_handle(context)
         if message is not None and handle:
             if _text_mentions_handle(message.text, getattr(message, "entities", None), handle):
