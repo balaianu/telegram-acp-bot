@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -132,17 +133,27 @@ def _validate_telegram_section(tg: dict[str, Any], path: Path, where: str = "") 
         )
 
 
-def _require_optional_bool(tg: dict[str, Any], path: Path, key: str, where: str = "") -> None:
-    if key in tg and not isinstance(tg[key], bool):
-        raise _err(path, f"'telegram.{key}' must be a boolean", where)
+def _require_optional_bool(
+    section: dict[str, Any], path: Path, key: str, where: str = "", *, label: str = "telegram"
+) -> None:
+    if key in section and not isinstance(section[key], bool):
+        raise _err(path, f"'{label}.{key}' must be a boolean", where)
 
 
 def _validate_acp_section(acp: dict[str, Any], path: Path, where: str = "") -> None:
     if not isinstance(acp, dict):
         raise _err(path, "'acp' must be a JSON object", where)
-    for key in ("agent_command", "restart_command", "log_level", "scheduled_tasks_db", "workspace"):
+    for key in (
+        "agent_command",
+        "restart_command",
+        "log_level",
+        "scheduled_tasks_db",
+        "workspace",
+        "channel_state_file",
+    ):
         if key in acp and not isinstance(acp[key], str):
             raise _err(path, f"'acp.{key}' must be a string", where)
+    _require_optional_bool(acp, path, "allow_path_inputs", where, label="acp")
     if "permission_mode" in acp and acp["permission_mode"] not in _VALID_PERMISSION_MODES:
         raise _err(
             path,
@@ -220,3 +231,18 @@ def _validate_http_server(name: str, server: dict[str, Any], path: Path, where: 
             isinstance(k, str) and isinstance(v, str) for k, v in headers.items()
         ):
             raise _err(path, f"MCP server {name!r} 'headers' must be an object of string → string", where)
+
+
+def discover_config_path() -> Path | None:
+    """Find a config file from standard locations (used by callers that skip `--config`)."""
+
+    xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser()
+    candidates = [
+        Path(".telegram_acp_bot/config.json"),
+        xdg_config_home / "telegram_acp_bot" / "config.json",
+        Path("~/.telegram_acp_bot/config.json").expanduser(),
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None

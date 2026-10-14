@@ -8,8 +8,9 @@ from pathlib import Path
 
 from acp.schema import HttpMcpServer, McpServerStdio
 
-from telegram_acp_bot.instance import build_bot_instance, build_mcp_servers
-from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.instance import build_bot_instance, build_channel_env, build_mcp_servers
+from telegram_acp_bot.mcp.state import AGENT_NAME_ENV, STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.mcp.tools.attachments import ALLOW_PATH_ENV
 from telegram_acp_bot.scheduled_tasks import ACP_SCHEDULED_TASKS_DB_ENV, ScheduledTaskScheduler, ScheduledTaskStore
 from telegram_acp_bot.telegram.bridge import TelegramBridge
 from tests.test_agent_config import base_spec
@@ -59,11 +60,34 @@ def test_build_bot_instance_starts_the_declared_agent_command():
     assert instance.service._args == ["--acp", "--yolo"]
 
 
+def test_build_bot_instance_isolates_the_spawn_env_to_this_agent(tmp_path: Path):
+    spec = base_spec(
+        name="qoder",
+        token=OTHER_TOKEN,
+        channel_state_file=tmp_path / "state.json",
+        scheduled_tasks_db=tmp_path / "tasks.sqlite3",
+        allow_path_inputs=True,
+    )
+    instance = build_bot_instance(spec, stop_event=asyncio.Event())
+
+    assert instance.service._spawn_env == build_channel_env(
+        telegram_token=OTHER_TOKEN,
+        state_file=tmp_path / "state.json",
+        scheduled_tasks_db=tmp_path / "tasks.sqlite3",
+        allow_path_inputs=True,
+        agent_name="qoder",
+    )
+    assert instance.service._spawn_env[STATE_FILE_ENV] == str(tmp_path / "state.json")
+    assert instance.service._spawn_env[TOKEN_ENV] == OTHER_TOKEN
+
+
 def test_build_mcp_servers_points_the_internal_server_at_this_instance():
     servers = build_mcp_servers(
         telegram_token=OTHER_TOKEN,
         state_file=EXTRA_STATE,
         scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=True,
+        agent_name="qoder",
     )
 
     assert len(servers) == 1
@@ -75,7 +99,28 @@ def test_build_mcp_servers_points_the_internal_server_at_this_instance():
         TOKEN_ENV: OTHER_TOKEN,
         STATE_FILE_ENV: str(EXTRA_STATE),
         ACP_SCHEDULED_TASKS_DB_ENV: str(EXTRA_DB),
+        ALLOW_PATH_ENV: "1",
+        AGENT_NAME_ENV: "qoder",
     }
+
+
+def test_build_channel_env_is_the_single_source_of_the_internal_server_env():
+    channel_env = build_channel_env(
+        telegram_token=OTHER_TOKEN,
+        state_file=EXTRA_STATE,
+        scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=False,
+        agent_name="qoder",
+    )
+    servers = build_mcp_servers(
+        telegram_token=OTHER_TOKEN,
+        state_file=EXTRA_STATE,
+        scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=False,
+        agent_name="qoder",
+    )
+
+    assert {item.name: item.value for item in servers[0].env} == channel_env
 
 
 def test_build_mcp_servers_appends_configured_servers():
@@ -83,6 +128,8 @@ def test_build_mcp_servers_appends_configured_servers():
         telegram_token=OTHER_TOKEN,
         state_file=EXTRA_STATE,
         scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=False,
+        agent_name="qoder",
         extra_servers={
             "local": {"command": "uv", "args": ["run", "echo.py"], "env": {"KEY": "val"}},
             "remote": {"url": "https://mcp.example.com/mcp", "headers": {"Auth": "Bearer tok"}},
@@ -103,6 +150,8 @@ def test_build_mcp_servers_lets_an_external_channel_override_the_internal_one():
         telegram_token=OTHER_TOKEN,
         state_file=EXTRA_STATE,
         scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=False,
+        agent_name="qoder",
         extra_servers={"telegram-channel": {"command": "custom-server"}},
     )
 

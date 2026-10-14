@@ -126,6 +126,7 @@ class AcpAgentService:
         permission_event_output: PermissionEventOutput = "stdout",
         mcp_servers: tuple[McpServerStdio | HttpMcpServer, ...] = (),
         channel_state_file: Path | None = None,
+        spawn_env: Mapping[str, str] | None = None,
         stdio_limit: int = 8_388_608,
         connect_timeout: float = 30.0,
         connector: AcpConnectionFactory | None = None,
@@ -142,6 +143,7 @@ class AcpAgentService:
         self._permission_event_output = permission_event_output
         self._mcp_servers = mcp_servers
         self._channel_state_file = channel_state_file
+        self._spawn_env = spawn_env
         self._stdio_limit = stdio_limit
         self._connect_timeout = connect_timeout
         self._connector = connector or cast(AcpConnectionFactory, connect_to_agent)
@@ -674,6 +676,7 @@ class AcpAgentService:
             stdout=aio_subprocess.PIPE,
             limit=self._stdio_limit,
             start_new_session=True,
+            **({"env": {**os.environ, **self._spawn_env}} if self._spawn_env else {}),
         )
         with bind_log_context(chat_id=chat_id):
             logger.debug("Spawned ACP process for chat_id=%s pid=%s", chat_id, getattr(process, "pid", "unknown"))
@@ -1036,12 +1039,6 @@ class AcpAgentService:
         async with self._channel_state_lock:
             await asyncio.to_thread(self._remove_channel_session_mapping, session_id=session_id)
 
-    async def _set_last_channel_session(self, *, session_id: str) -> None:
-        if self._channel_state_file is None:
-            return
-        async with self._channel_state_lock:
-            await asyncio.to_thread(save_last_session_id, self._channel_state_file, session_id)
-
     async def record_pending_media(
         self,
         *,
@@ -1076,12 +1073,20 @@ class AcpAgentService:
         return tuple(refs)
 
     async def set_prompt_message_context(self, *, session_id: str, message_id: int | None) -> None:
-        """Persist the active Telegram prompt message id for the current turn."""
+        """Persist the active Telegram prompt message id for the current turn.
+
+        While a turn is in flight (`message_id` is set) the session also becomes the
+        last active one, so an MCP attachment call that omits `session_id` resolves to
+        the chat that most recently prompted the agent, not merely the one that created
+        a session first.
+        """
 
         if self._channel_state_file is None:
             return
         async with self._channel_state_lock:
             await asyncio.to_thread(save_prompt_message_id, self._channel_state_file, session_id, message_id)
+            if message_id is not None:
+                await asyncio.to_thread(save_last_session_id, self._channel_state_file, session_id)
 
     def _write_channel_session_mapping(self, *, chat_id: int, session_id: str) -> None:
         assert self._channel_state_file is not None

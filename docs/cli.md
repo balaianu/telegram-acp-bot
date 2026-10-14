@@ -10,20 +10,19 @@ The bot entrypoint is `telegram-acp-bot`.
 
 - `--config`
   Path to the JSON config file to load.
-  Default: {term}`ACP_CONFIG_FILE` when set, otherwise the first file found in a standard
-  location. A pinned path that cannot be read stops the run instead of falling back to
-  discovery; see {ref}`config-file`.
+  Default: the first file found in a standard location. A pinned path that cannot be read stops
+  the run instead of falling back to discovery; see {ref}`config-file`.
 
 - `--telegram-token`
-  Default: {term}`TELEGRAM_BOT_TOKEN`.
-  Required if {term}`TELEGRAM_BOT_TOKEN` is not set.
+  Default: `telegram.bot_token` in the config file.
+  Required if that key is not set.
 
 - `--agent-command`
-  Default: {term}`ACP_AGENT_COMMAND`.
-  Required if {term}`ACP_AGENT_COMMAND` is not set.
+  Default: `acp.agent_command` in the config file.
+  Required if that key is not set.
 
 - `--restart-command`
-  Default: {term}`ACP_RESTART_COMMAND`.
+  Default: `acp.restart_command` in the config file.
   Optional command used by `/restart` to relaunch the process.
 
 - `--allowed-user-id`
@@ -38,7 +37,7 @@ The bot entrypoint is `telegram-acp-bot`.
 - `--agent NAME=COMMAND`
   Repeatable. Declares one agent of a multi-agent run, or overrides the ACP command line of an
   agent the config file already declares, without editing the file.
-  Each name is a separate Telegram bot, so give it its own `TELEGRAM_BOT_TOKEN_<NAME>`.
+  Each name is a separate Telegram bot, so give it its own `agents.<name>.telegram.bot_token`.
   Names must match `^[a-z0-9][a-z0-9_-]{0,62}$`. See {ref}`config-agents`.
 
 - `--only NAME`
@@ -46,18 +45,18 @@ The bot entrypoint is `telegram-acp-bot`.
   The config file offers the same choice as a top-level `"only"` list, which this flag replaces.
 
 - `--group-require-mention`
-  Default: {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION`.
+  Default: `telegram.group_require_mention` in the config file.
   Flag: when set, group messages are answered only if they `@mention` the bot or reply to
   one of its messages. Private chats are unaffected.
 
 - `--group-media-queue`
-  Default: {term}`ACP_TELEGRAM_GROUP_MEDIA_QUEUE`.
+  Default: `telegram.group_media_queue` in the config file.
   Flag: when set, media in group messages that the mention gate ignores is kept as a
   `file_id` reference and announced to the agent on its next answered prompt, where
   `telegram_fetch_attachment` can download it on demand. Needs `--group-require-mention`.
 
 - `--status-reactions`
-  Default: {term}`ACP_TELEGRAM_STATUS_REACTIONS`.
+  Default: `telegram.status_reactions` in the config file.
   Allowed values: `off`, `minimal`.
   In `minimal`, the bot puts its own emoji reaction on the message that carried the prompt and
   replaces it as the cycle moves: 👀 when the chat is already busy, 🤔 while the agent works,
@@ -71,26 +70,27 @@ The bot entrypoint is `telegram-acp-bot`.
   replaces an emoji the agent put on that same message through `telegram_set_message_reaction`.
 
 - `--workspace`
+  Default: `acp.workspace` in the config file.
   Default workspace used by `/new` when no workspace path is provided.
 
 - `--permission-mode`
-  Default: {term}`ACP_PERMISSION_MODE`.
+  Default: `acp.permission_mode` in the config file.
   Allowed values: `ask`, `approve`, `deny`.
 
 - `--permission-event-output`
-  Default: {term}`ACP_PERMISSION_EVENT_OUTPUT`.
+  Default: `acp.permission_event_output` in the config file.
   Allowed values: `stdout`, `off`.
 
 - `--acp-stdio-limit`
-  Default: {term}`ACP_STDIO_LIMIT`.
+  Default: `acp.stdio_limit` in the config file.
   Asyncio stdio reader limit in bytes.
 
 - `--acp-connect-timeout`
-  Default: {term}`ACP_CONNECT_TIMEOUT`.
+  Default: `acp.connect_timeout` in the config file.
   Timeout in seconds for ACP `initialize` + `new_session` handshake.
 
 - `-m`, `--activity-mode`
-  Default: {term}`ACP_ACTIVITY_MODE`.
+  Default: `acp.activity_mode` in the config file.
   Allowed values: `normal`, `compact`, `verbose`.
   In `normal`, the bot sends activity/tool updates as separate messages without
   streaming edits.
@@ -110,13 +110,13 @@ The bot entrypoint is `telegram-acp-bot`.
 ## Notes
 
 - `/restart` behavior:
-  - If {term}`ACP_RESTART_COMMAND` (or `--restart-command`) is set, that command is executed.
+  - If `acp.restart_command` (or `--restart-command`) is set, that command is executed.
   - Otherwise, the bot re-execs itself using `sys.executable + sys.argv`.
   - It requires an active session and reports session context (`session_id`, `workspace`) in the response.
   - `/restart N [workspace]` selects and loads a resumable session in-process (no process relaunch) and replies with a resume acknowledgment instead of a relaunch message.
 - Access control behavior:
   - Configure at least one allowlist entry via `--allowed-user-id`, `--allowed-username`,
-    {term}`TELEGRAM_ALLOWED_USER_IDS`, or {term}`TELEGRAM_ALLOWED_USERNAMES`.
+    `telegram.allowed_user_ids`, or `telegram.allowed_usernames`.
 - MCP behavior:
   - `telegram-acp-bot` always advertises an internal MCP stdio server (`telegram-channel`) to the ACP agent.
 - Multi-agent behavior (see {ref}`config-agents`):
@@ -135,8 +135,8 @@ telegram-acp-bot register-commands --telegram-token <TOKEN> [options]
 ### Options
 
 - `--telegram-token`
-  Default: {term}`TELEGRAM_BOT_TOKEN`.
-  Required if {term}`TELEGRAM_BOT_TOKEN` is not set.
+  Default: `telegram.bot_token` in the config file.
+  Required if that key is not set.
   Ignored for agents the config file declares, since each of those resolves its own token.
 
 - `--bot`
@@ -165,20 +165,20 @@ telegram-acp-bot register-commands --telegram-token <TOKEN> [options]
 Register commands for all users (default scope):
 
 ```bash
-telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN"
+telegram-acp-bot register-commands --telegram-token <TOKEN>
 ```
 
 Preview what would be registered without calling the API:
 
 ```bash
-telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN" --dry-run
+telegram-acp-bot register-commands --telegram-token <TOKEN> --dry-run
 ```
 
 Register commands only for private chats in English:
 
 ```bash
 telegram-acp-bot register-commands \
-  --telegram-token "$TELEGRAM_BOT_TOKEN" \
+  --telegram-token <TOKEN> \
   --scope all_private_chats \
   --language-code en
 ```
@@ -186,7 +186,7 @@ telegram-acp-bot register-commands \
 Delete all registered commands for the default scope:
 
 ```bash
-telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN" --delete
+telegram-acp-bot register-commands --telegram-token <TOKEN> --delete
 ```
 
 Register every agent of a fleet, each with its own token, and preview it first:
@@ -212,7 +212,7 @@ telegram-acp-bot --config ./telegram-acp-bot.json register-commands --bot qoder
   registered, and every line names the bot it belongs to (`[qoder] Registered …`). A flat config
   has one bot, so its lines stay unprefixed.
 - A declared agent with no token anywhere is reported as a missing
-  `TELEGRAM_BOT_TOKEN_<NAME>` before any API call, so a half-configured fleet never
+  `agents.<name>.telegram.bot_token` before any API call, so a half-configured fleet never
   registers anything.
 - Transport logs stay quiet on this path. The request URL that `httpx` prints at INFO is the bot
   token, and this sub-command never reaches the bot's own logging setup, so it lowers `httpx`,

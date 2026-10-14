@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 import sys
 from collections.abc import Sequence
+from typing import Any
 
-from dotenv import load_dotenv
 from telegram import (
     Bot,
     BotCommandScopeAllChatAdministrators,
@@ -22,8 +21,9 @@ from telegram import (
 )
 from telegram.error import TelegramError
 
-from telegram_acp_bot.agent_config import TOKEN_ENV
-from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, env_suffix
+from telegram_acp_bot.agent_config import agent_tokens
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME
+from telegram_acp_bot.config_file import ConfigFileError, discover_config_path, load_config_file
 from telegram_acp_bot.logging_context import quiet_transport_logging
 from telegram_acp_bot.telegram.bot import BOT_COMMANDS
 
@@ -38,15 +38,15 @@ SCOPE_CHOICES: list[str] = list(_SCOPE_CLASSES)
 
 _SUBCOMMAND_NAME = "register-commands"
 _SUBCOMMAND_HELP = "Register Telegram slash commands via the Bot API (setMyCommands)."
-_TOKEN_REQUIRED_MESSAGE = "--telegram-token (or TELEGRAM_BOT_TOKEN) is required"
+_TOKEN_REQUIRED_MESSAGE = "--telegram-token (or telegram.bot_token in the config file) is required"
 
 
 def _populate_register_commands_args(parser: argparse.ArgumentParser) -> None:
     """Add `register-commands` arguments to *parser* (shared by standalone and subparser)."""
     parser.add_argument(
         "--telegram-token",
-        default=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-        help="Telegram bot token. Default: TELEGRAM_BOT_TOKEN env var.",
+        default="",
+        help="Telegram bot token. Default: telegram.bot_token from the config file.",
     )
     parser.add_argument(
         "--bot",
@@ -143,7 +143,7 @@ def _require_tokens(targets: Sequence[tuple[str, str]]) -> None:
         if name == DEFAULT_AGENT_NAME:
             detail = _TOKEN_REQUIRED_MESSAGE
         else:
-            detail = f"agent {name!r} has no token; set {TOKEN_ENV}_{env_suffix(name)} in the environment"
+            detail = f"agent {name!r} has no token; set telegram.bot_token under agents.{name} in the config file"
         print(f"telegram-acp-bot {_SUBCOMMAND_NAME}: error: {detail}", file=sys.stderr)
         raise SystemExit(2)
 
@@ -226,16 +226,27 @@ def _execute_register_commands(opts: argparse.Namespace, *, tokens: Sequence[tup
 def register_commands_main(args: list[str] | None = None) -> int:
     """Run the `register-commands` sub-command standalone.
 
-    Loads `.env`, parses *args* with `{py:func}`get_register_commands_parser``,
-    and delegates to `{py:func}`_execute_register_commands``.
+    Parses *args* with `{py:func}`get_register_commands_parser``, discovers the config
+    file, and delegates to `{py:func}`_execute_register_commands`` with one `(agent, token)`
+    pair per declared agent.
 
     Returns:
         0 on success, 1 on API error.
     """
-    load_dotenv(override=False)
     parser = get_register_commands_parser()
     opts = parser.parse_args(args=args)
-    return _execute_register_commands(opts)
+
+    config_path = discover_config_path()
+    config_data: dict[str, Any] = {}
+    if config_path is not None:
+        try:
+            config_data = load_config_file(config_path)
+        except ConfigFileError as exc:
+            print(f"telegram-acp-bot {_SUBCOMMAND_NAME}: error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+
+    tokens = agent_tokens(config_data=config_data, fallback_token=opts.telegram_token)
+    return _execute_register_commands(opts, tokens=tokens)
 
 
 __all__: list[str] = [

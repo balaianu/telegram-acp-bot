@@ -31,7 +31,7 @@ The built-in server currently exposes five tools.
 
 `telegram_send_attachment` lets the agent deliver a file or image to the current Telegram chat. This is the tool behind flows like “send me the generated screenshot” or “upload the review artifact”.
 
-`telegram_fetch_attachment` lets the agent download media that Telegram announced as pending, by `file_id`, into its own workspace. This is the counterpart of the lazy inbound path described in {term}`ACP_TELEGRAM_GROUP_MEDIA_QUEUE`.
+`telegram_fetch_attachment` lets the agent download media that Telegram announced as pending, by `file_id`, into its own workspace. This is the counterpart of the lazy inbound path described under `telegram.group_media_queue`.
 
 `telegram_set_message_reaction` lets the agent add a standard Telegram emoji reaction to a message in the current chat. This is the tool behind lightweight moments such as “acknowledge that briefly” or “react instead of sending a noisy one-line reply”.
 
@@ -92,12 +92,12 @@ telegram_send_attachment(
 )
 ```
 
-If the MIME type resolves to `image/*`, the server sends a Telegram photo. Otherwise it sends a document. In most deployments, `data_base64` is the safer default. The `path` input is intentionally disabled unless {term}`ACP_TELEGRAM_CHANNEL_ALLOW_PATH` is enabled.
+If the MIME type resolves to `image/*`, the server sends a Telegram photo. Otherwise it sends a document. In most deployments, `data_base64` is the safer default. The `path` input is intentionally disabled unless `acp.allow_path_inputs` is enabled.
 
 (mcp-feature-fetching)=
 ## Fetch Pending Media
 
-Group chats are the case where this matters most. With {term}`ACP_TELEGRAM_GROUP_MEDIA_QUEUE` enabled, a group message that the {term}`ACP_TELEGRAM_GROUP_REQUIRE_MENTION` gate ignores is not dropped: only its Telegram `file_id` is queued, and the next prompt the bot does answer starts with a notice listing the parked references. Nothing is downloaded, so bytes never sit in the bot's memory or in the agent's context until the agent decides they are worth reading:
+Group chats are the case where this matters most. With `telegram.group_media_queue` enabled, a group message that the `telegram.group_require_mention` gate ignores is not dropped: only its Telegram `file_id` is queued, and the next prompt the bot does answer starts with a notice listing the parked references. Nothing is downloaded, so bytes never sit in the bot's memory or in the agent's context until the agent decides they are worth reading:
 
 ```text
 telegram_fetch_attachment(
@@ -146,7 +146,7 @@ schedule_task(
 
 Both attachment delivery and scheduling need to know which Telegram chat should receive the side effect. The MCP layer resolves that from a local state file maintained by the bot runtime.
 
-By default that file is named after the running bot process, so routing state and queued media references are discarded when the process exits. Set {term}`ACP_TELEGRAM_CHANNEL_STATE_FILE` to a stable path to keep them across restarts; see {doc}`configuration`.
+By default that file is named after the running bot process, so routing state and queued media references are discarded when the process exits. Set `acp.channel_state_file` to a stable path to keep them across restarts; the bot then injects it into each instance's server as {term}`ACP_TELEGRAM_CHANNEL_STATE_FILE`. See {doc}`configuration`.
 
 (mcp-per-agent-state)=
 When one process runs several agents, each gets its own state file, database and internal `telegram-channel` server,

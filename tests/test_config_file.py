@@ -126,6 +126,16 @@ def test_acp_not_object(tmp_path: Path) -> None:
         load_config_file(write_config(tmp_path, {"acp": "string"}))
 
 
+def test_acp_allow_path_inputs_not_boolean(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'acp\.allow_path_inputs' must be a boolean"):
+        load_config_file(write_config(tmp_path, {"acp": {"allow_path_inputs": "yes"}}))
+
+
+def test_acp_channel_state_file_not_string(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'acp\.channel_state_file' must be a string"):
+        load_config_file(write_config(tmp_path, {"acp": {"channel_state_file": 5}}))
+
+
 def test_acp_invalid_permission_mode(tmp_path: Path) -> None:
     with pytest.raises(ConfigFileError, match=r"'acp\.permission_mode' must be one of"):
         load_config_file(write_config(tmp_path, {"acp": {"permission_mode": "invalid"}}))

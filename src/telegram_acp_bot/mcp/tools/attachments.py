@@ -15,7 +15,9 @@ from typing import cast
 from mcp.server.fastmcp import FastMCP
 from telegram import Bot, InputFile
 
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME
 from telegram_acp_bot.mcp.context import resolve_request_context
+from telegram_acp_bot.mcp.state import AGENT_NAME_ENV
 
 ALLOW_PATH_ENV = "ACP_TELEGRAM_CHANNEL_ALLOW_PATH"
 EXACTLY_ONE_ATTACHMENT_SOURCE_ERROR = "provide exactly one of `path` or `data_base64`"
@@ -93,12 +95,21 @@ async def telegram_fetch_attachment(
     }
 
 
+def _media_dirname() -> str:
+    """The media subdirectory for this agent, namespaced so two agents never share files."""
+
+    agent = os.getenv(AGENT_NAME_ENV, "").strip()
+    if agent and agent != DEFAULT_AGENT_NAME:
+        return f"{DEFAULT_MEDIA_DIRNAME}/{agent}"
+    return DEFAULT_MEDIA_DIRNAME
+
+
 def resolve_media_target(*, dest: str | None, file_id: str, mime_type: str | None = None) -> Path | str:
     """Resolve where a fetched attachment may be written, keeping it inside the working directory."""
 
     root = Path.cwd().resolve(strict=False)
     if dest is None:
-        return root / DEFAULT_MEDIA_DIRNAME / default_media_name(file_id, mime_type)
+        return root / _media_dirname() / default_media_name(file_id, mime_type)
 
     candidate = Path(dest).expanduser()
     resolved = (candidate if candidate.is_absolute() else root / candidate).resolve(strict=False)

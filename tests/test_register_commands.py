@@ -32,16 +32,15 @@ REFUSED_MESSAGE = "Invalid token"
 
 
 @pytest.fixture(autouse=True)
-def isolate_env(monkeypatch: pytest.MonkeyPatch, mocker):
-    """Remove real token env vars and stub load_dotenv for both dispatch paths.
+def isolate_config_discovery(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Keep tests from discovering a real operator config in the home directory.
 
-    `main()` calls `telegram_acp_bot.load_dotenv`; `register_commands_main()`
-    calls `telegram_acp_bot.register_commands.load_dotenv`.  Both are patched
-    so neither path loads a real `.env` file during tests.
+    Both `main()` and `register_commands_main()` look for a config file in standard
+    locations. Pointing HOME and XDG_CONFIG_HOME at an empty tmp directory makes that
+    search find nothing, so each test controls its own tokens explicitly.
     """
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    mocker.patch("telegram_acp_bot.load_dotenv")
-    return mocker.patch("telegram_acp_bot.register_commands.load_dotenv")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +77,19 @@ def test_get_register_commands_parser_returns_parser():
 
 def test_register_commands_main_requires_token():
     """Missing token exits with error."""
+    with pytest.raises(SystemExit):
+        register_commands_main([])
+
+
+def test_register_commands_main_reports_an_unreadable_discovered_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A discovered config file that fails validation stops the run before any API call."""
+    config_dir = tmp_path / "config" / "telegram_acp_bot"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text("{not valid json")
+
     with pytest.raises(SystemExit):
         register_commands_main([])
 
@@ -345,13 +357,13 @@ def test_register_commands_rejects_an_unknown_bot(monkeypatch, tmp_path, capsys:
     assert "no agent named 'ghost' is declared" in capsys.readouterr().err
 
 
-def test_register_commands_reports_an_agent_without_a_token(monkeypatch, tmp_path, capsys: pytest.CaptureFixture):
-    """A declared agent with no token names the environment variable to set."""
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-
+def test_register_commands_reports_an_agent_without_a_token(tmp_path, capsys: pytest.CaptureFixture):
+    """A declared agent with no token names the config key to set."""
     with pytest.raises(SystemExit):
         main(["--config", str(agents_config(tmp_path, {"agents": {"qoder": {}}})), "register-commands"])
-    assert "TELEGRAM_BOT_TOKEN_QODER" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "agent 'qoder' has no token" in err
+    assert "agents.qoder" in err
 
 
 def test_register_commands_fails_when_one_agent_is_refused(mocker, monkeypatch, tmp_path, capsys):

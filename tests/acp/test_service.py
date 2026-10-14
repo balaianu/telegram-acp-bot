@@ -285,18 +285,26 @@ async def test_drop_channel_session_mapping_ignores_unknown_session(tmp_path: Pa
     assert load_last_session_id(state_file) == "known"
 
 
-async def test_set_last_channel_session_updates_state_file(tmp_path: Path):
+async def test_prompt_context_refreshes_the_last_session(tmp_path: Path):
+    """A turn in flight makes its session the one an attachment call falls back to."""
     state_file = tmp_path / "channel-state.json"
     service = AcpAgentService(SessionRegistry(), program="agent", args=[], channel_state_file=state_file)
 
-    await service._set_last_channel_session(session_id="latest")
+    await service.set_prompt_message_context(session_id="latest", message_id=PROMPT_MESSAGE_ID)
 
     assert load_last_session_id(state_file) == "latest"
 
 
-async def test_set_last_channel_session_without_state_file_is_noop():
-    service = AcpAgentService(SessionRegistry(), program="agent", args=[])
-    await service._set_last_channel_session(session_id="ignored")
+async def test_clearing_prompt_context_leaves_the_last_session_alone(tmp_path: Path):
+    """End-of-turn cleanup clears the message id without repointing the fallback."""
+    state_file = tmp_path / "channel-state.json"
+    service = AcpAgentService(SessionRegistry(), program="agent", args=[], channel_state_file=state_file)
+    await service.set_prompt_message_context(session_id="latest", message_id=PROMPT_MESSAGE_ID)
+
+    await service.set_prompt_message_context(session_id="latest", message_id=None)
+
+    assert load_prompt_message_id(state_file, "latest") is None
+    assert load_last_session_id(state_file) == "latest"
 
 
 async def test_set_prompt_message_context_updates_state_file(tmp_path: Path):

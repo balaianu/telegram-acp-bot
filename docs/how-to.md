@@ -163,7 +163,7 @@ The bot replies with the scheduled execution time. When the time arrives, the st
 
 The prompt may also continue on following lines. Everything after the time spec is stored verbatim, so multiline prompts keep their line breaks.
 
-Natural-language parsing uses English and Spanish by default. You can customize the accepted languages with {term}`ACP_SCHEDULE_LANGUAGES` or `telegram.schedule_languages` in the config file.
+Natural-language parsing uses English and Spanish by default. You can customize the accepted languages with `telegram.schedule_languages` in the config file or the `--schedule-language` flag.
 
 Single-line prompts still work too:
 
@@ -214,7 +214,7 @@ Restart requested. Re-launching process...
 Session restarted: <session_id> in <workspace>
 ```
 
-Then it exits polling and re-execs the process (or uses `ACP_RESTART_COMMAND` if configured).
+Then it exits polling and re-execs the process (or uses `acp.restart_command` / `--restart-command` if configured).
 
 If there is no active session, it replies:
 
@@ -283,7 +283,7 @@ Three limits to know about:
   caption is dispatched by this gate and still runs the bot's handler without its arguments.
 - The agent's commands never join Telegram's native `/` menu, which only mirrors the bot's own command list. Type them
   or copy them from `/cmds`. That menu comes from `register-commands`, so after an upgrade that adds a bot command,
-  run `telegram-acp-bot register-commands --telegram-token "$TELEGRAM_BOT_TOKEN"` again or the new entry stays hidden.
+  run `telegram-acp-bot register-commands --telegram-token <TOKEN>` again (or `--config <file> register-commands`) or the new entry stays hidden.
 
 A command the agent did not advertise is rejected instead of forwarded, so a typo never reaches the agent as prompt
 text, and a button left over from an older keyboard reports that the command is no longer advertised rather than running
@@ -356,7 +356,7 @@ What happens depends on when the death is noticed:
 - **In the middle of an answer**: the bot restarts the agent and reloads the same session, then replies with a notice
   instead of an answer. The interrupted message is **not** replayed, because the agent may already have run part of
   it (a command, an edit), and running that twice is worse than asking you once. Send the message again.
-- **The agent cannot be started at all** (for example the binary in {term}`ACP_AGENT_COMMAND` is gone): the bot says so,
+- **The agent cannot be started at all** (for example the binary in `acp.agent_command` is gone): the bot says so,
   and `/new` is the way back once the command is fixed.
 
 Reloading uses ACP `session/load`, so the conversation history survives. An agent that does not implement it gets a new
@@ -371,12 +371,14 @@ One process can drive several agents at once, each behind its own Telegram bot. 
 you keep a fast, cheap agent for everyday questions next to a heavier one for long tasks,
 without running and supervising a process per bot.
 
-Create a second bot with `@BotFather`, then declare both in a config file. Keep the tokens in
-the environment and out of the file:
+Create a second bot with `@BotFather`, then declare both in a config file. Every token lives in
+the file now (there is no environment layer for settings), so keep the file `chmod 600` and out
+of version control:
 
 ```json
 {
   "telegram": {
+    "bot_token": "0:shared-default",
     "allowed_user_ids": [123456789]
   },
   "acp": {
@@ -384,16 +386,20 @@ the environment and out of the file:
   },
   "agents": {
     "qoder": {
+      "telegram": {
+        "bot_token": "111111:qoder"
+      },
       "acp": {
         "agent_command": "qodercli --acp"
       }
     },
     "codex": {
+      "telegram": {
+        "bot_token": "222222:codex",
+        "allowed_user_ids": [123456789, 987654321]
+      },
       "acp": {
         "agent_command": "npx @zed-industries/codex-acp"
-      },
-      "telegram": {
-        "allowed_user_ids": [123456789, 987654321]
       }
     }
   }
@@ -401,14 +407,9 @@ the environment and out of the file:
 ```
 
 The flat sections carry what both bots share, and each agent overrides only what differs; see
-{ref}`config-agents`. Because an agent that sets nothing falls back to the flat token, give
-the base a token of its own too and pin each agent separately:
-
-```bash
-export TELEGRAM_BOT_TOKEN=0:shared-default
-export TELEGRAM_BOT_TOKEN_QODER=111111:qoder
-export TELEGRAM_BOT_TOKEN_CODEX=222222:codex
-```
+{ref}`config-agents`. Because an agent that sets no `bot_token` falls back to the flat
+`telegram.bot_token`, give each agent its own distinct token — startup refuses two bots that end
+up on the same one.
 
 Preview the command menus, register them, and start the fleet:
 
@@ -459,7 +460,7 @@ This lets you trace:
 - all activity from one ACP session (`session_id`),
 - all logs tied to a single prompt execution (including queued prompts) via `prompt_cycle_id`.
 
-Use {term}`ACP_LOG_FORMAT`=`json` to emit structured logs for log aggregators.
+Set `acp.log_format` to `json` (or pass `--log-format json`) to emit structured logs for log aggregators.
 
 By default, the bot also emits compact text previews for prompts and replies:
 

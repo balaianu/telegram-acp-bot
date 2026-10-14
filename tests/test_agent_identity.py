@@ -10,7 +10,6 @@ from telegram_acp_bot.agent_identity import (
     AGENT_NAME_ERROR,
     DEFAULT_AGENT_NAME,
     agent_state_dir,
-    env_suffix,
     validate_agent_name,
 )
 
@@ -41,14 +40,6 @@ def test_validate_agent_name_accepts_a_portable_name(name: str):
 def test_validate_agent_name_rejects_a_name_that_is_unsafe_as_a_path(name):
     with pytest.raises(ValueError, match=AGENT_NAME_ERROR.split()[0]):
         validate_agent_name(name)
-
-
-def test_env_suffix_uppercases_the_name_for_environment_lookups():
-    assert env_suffix("qoder") == "QODER"
-
-
-def test_env_suffix_replaces_a_hyphen_that_a_variable_name_cannot_hold():
-    assert env_suffix("claude-code") == "CLAUDE_CODE"
 
 
 def test_agent_state_dir_honours_xdg_state_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

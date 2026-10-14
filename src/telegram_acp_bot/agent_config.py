@@ -2,16 +2,17 @@
 
 The precedence chain lives here as a pure function, so a multi-agent setup can be
 asserted without touching Telegram, the filesystem or a subprocess. `main()` builds the
-`base` spec from the flat config, environment and flags it already resolves; that spec
-doubles as the single-agent answer and as the defaults every named agent overrides.
+`base` spec from the flat config and CLI flags it already resolves; that spec doubles as
+the single-agent answer and as the defaults every named agent overrides.
 
 Precedence for a named agent, highest first:
 
 1. ``--agent NAME=COMMAND`` and ``--only NAME``.
-2. ``TELEGRAM_BOT_TOKEN_<NAME>``, ``ACP_TELEGRAM_CHANNEL_STATE_FILE_<NAME>`` and
-   ``ACP_SCHEDULED_TASKS_DB_<NAME>`` in the environment.
-3. The ``agents.<name>`` section of the config file.
-4. The flat sections carried by `base`.
+2. The ``agents.<name>`` section of the config file.
+3. The flat sections carried by `base`.
+
+There is no environment layer: routing state, tokens and databases come from the config
+file alone, so two agents never collide by inheriting one flat variable.
 """
 
 from __future__ import annotations
@@ -21,22 +22,19 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, env_suffix, validate_agent_name
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, validate_agent_name
 from telegram_acp_bot.config_file import ConfigFileError
 from telegram_acp_bot.instance import BotInstanceSpec
-from telegram_acp_bot.mcp.state import STATE_FILE_ENV, resolve_state_file
-from telegram_acp_bot.scheduled_tasks import ACP_SCHEDULED_TASKS_DB_ENV, default_scheduled_tasks_db_path
-
-TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+from telegram_acp_bot.mcp.state import resolve_state_file
+from telegram_acp_bot.scheduled_tasks import default_scheduled_tasks_db_path
 
 
-def resolve_specs(  # noqa: PLR0913
+def resolve_specs(
     *,
     base: BotInstanceSpec,
     config_data: Mapping[str, Any],
     agent_flags: Sequence[str],
     only: Sequence[str],
-    env: Mapping[str, str],
     pid: int,
 ) -> list[BotInstanceSpec]:
     """Return one spec per agent to run, in declaration order.
@@ -56,7 +54,6 @@ def resolve_specs(  # noqa: PLR0913
             base=base,
             section=declared.get(name) or {},
             command=flag_commands.get(name),
-            env=env,
             pid=pid,
         )
         for name in _select(names, only)
@@ -65,9 +62,7 @@ def resolve_specs(  # noqa: PLR0913
     return specs
 
 
-def agent_tokens(
-    *, config_data: Mapping[str, Any], env: Mapping[str, str], fallback_token: str = ""
-) -> list[tuple[str, str]]:
+def agent_tokens(*, config_data: Mapping[str, Any], fallback_token: str = "") -> list[tuple[str, str]]:
     """Pair every declared agent with the token it should use, in declaration order.
 
     An empty list means the flat config describes one bot, so callers keep the single
@@ -75,25 +70,21 @@ def agent_tokens(
     ACP wiring.
     """
     declared = config_data.get("agents") or {}
-    return [
-        (name, _token_for(name, section=declared.get(name) or {}, env=env, fallback=fallback_token))
-        for name in declared
-    ]
+    return [(name, _token_for(name, section=declared.get(name) or {}, fallback=fallback_token)) for name in declared]
 
 
-def _token_for(name: str, *, section: Mapping[str, Any], env: Mapping[str, str], fallback: str) -> str:
-    """The token one agent polls with: its own env pin, its section, then the base token."""
+def _token_for(name: str, *, section: Mapping[str, Any], fallback: str) -> str:
+    """The token one agent polls with: its own section, then the base token."""
     telegram_cfg = section.get("telegram") or {}
-    return _pinned(env, f"{TOKEN_ENV}_{env_suffix(name)}") or str(telegram_cfg.get("bot_token") or fallback)
+    return str(telegram_cfg.get("bot_token") or fallback)
 
 
-def _spec_for(  # noqa: PLR0913
+def _spec_for(
     name: str,
     *,
     base: BotInstanceSpec,
     section: Mapping[str, Any],
     command: str | None,
-    env: Mapping[str, str],
     pid: int,
 ) -> BotInstanceSpec:
     """Layer one agent's overrides on top of the base spec."""
@@ -107,7 +98,7 @@ def _spec_for(  # noqa: PLR0913
 
     return BotInstanceSpec(
         name=name,
-        token=_token_for(name, section=section, env=env, fallback=base.token),
+        token=_token_for(name, section=section, fallback=base.token),
         allowed_user_ids=_ids_overlay(telegram_cfg.get("allowed_user_ids"), base.allowed_user_ids),
         allowed_usernames=_usernames_overlay(telegram_cfg.get("allowed_usernames"), base.allowed_usernames),
         workspace=acp_cfg.get("workspace", base.workspace),
@@ -122,23 +113,22 @@ def _spec_for(  # noqa: PLR0913
         stdio_limit=int(acp_cfg.get("stdio_limit", base.stdio_limit)),
         connect_timeout=float(acp_cfg.get("connect_timeout", base.connect_timeout)),
         extra_mcp_servers={**base.extra_mcp_servers, **(section.get("mcp_servers") or {})},
-        channel_state_file=_state_file_for(name, env=env, pid=pid),
-        scheduled_tasks_db=_db_for(name, acp_cfg=acp_cfg, env=env, base=base),
+        channel_state_file=_state_file_for(name, acp_cfg=acp_cfg, base=base, pid=pid),
+        scheduled_tasks_db=_db_for(name, acp_cfg=acp_cfg, base=base),
+        allow_path_inputs=bool(acp_cfg.get("allow_path_inputs", base.allow_path_inputs)),
         restart_command_parts=_command_or_none(acp_cfg.get("restart_command")) or base.restart_command_parts,
     )
 
 
-def _state_file_for(name: str, *, env: Mapping[str, str], pid: int) -> Path:
-    pinned = _pinned(env, f"{STATE_FILE_ENV}_{env_suffix(name)}")
-    if pinned:
-        return Path(pinned).expanduser()
+def _state_file_for(name: str, *, acp_cfg: Mapping[str, Any], base: BotInstanceSpec, pid: int) -> Path:
+    if acp_cfg.get("channel_state_file"):
+        return resolve_state_file(name=name, pid=pid, override=acp_cfg["channel_state_file"])
+    if name == DEFAULT_AGENT_NAME:
+        return base.channel_state_file
     return resolve_state_file(name=name, pid=pid)
 
 
-def _db_for(name: str, *, acp_cfg: Mapping[str, Any], env: Mapping[str, str], base: BotInstanceSpec) -> Path:
-    pinned = _pinned(env, f"{ACP_SCHEDULED_TASKS_DB_ENV}_{env_suffix(name)}")
-    if pinned:
-        return Path(pinned).expanduser()
+def _db_for(name: str, *, acp_cfg: Mapping[str, Any], base: BotInstanceSpec) -> Path:
     if acp_cfg.get("scheduled_tasks_db"):
         return Path(acp_cfg["scheduled_tasks_db"]).expanduser()
     if name == DEFAULT_AGENT_NAME:
@@ -180,7 +170,7 @@ def _reject_shared_token(specs: Sequence[BotInstanceSpec]) -> None:
         if spec.token in seen:
             raise ConfigFileError(  # noqa: TRY003
                 f"agents {seen[spec.token]!r} and {spec.name!r} share one bot token; "
-                f"set {TOKEN_ENV}_{env_suffix(spec.name)} for a distinct token"
+                f"set a distinct telegram.bot_token under agents.{spec.name} in the config file"
             )
         seen[spec.token] = spec.name
 
@@ -215,7 +205,3 @@ def _command_parts(value: str | Sequence[str]) -> tuple[str, ...]:
     if isinstance(value, str):
         return tuple(shlex.split(value))
     return tuple(value)
-
-
-def _pinned(env: Mapping[str, str], name: str) -> str:
-    return env.get(name, "").strip()

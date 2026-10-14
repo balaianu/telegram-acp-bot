@@ -1,8 +1,7 @@
 """Identity shared by every surface that names one agent.
 
-An agent name is a log field, an environment variable suffix and a path
-component at the same time, so the shape is validated once here instead of at
-each use site.
+An agent name is a log field and a path component at the same time, so the shape is
+validated once here instead of at each use site.
 """
 
 from __future__ import annotations
@@ -12,10 +11,7 @@ import re
 from pathlib import Path
 
 DEFAULT_AGENT_NAME = "default"
-AGENT_NAME_ERROR = (
-    "agent names must match ^[a-z0-9][a-z0-9_-]{0,62}$ "
-    "so they stay safe as a path component and an environment variable suffix"
-)
+AGENT_NAME_ERROR = "agent names must match ^[a-z0-9][a-z0-9_-]{0,62}$ so they stay safe as a path component"
 _AGENT_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 
@@ -25,15 +21,6 @@ def validate_agent_name(name: object) -> str:
     if not isinstance(name, str) or not _AGENT_NAME.fullmatch(name):
         raise ValueError(AGENT_NAME_ERROR)
     return name
-
-
-def env_suffix(name: str) -> str:
-    """Return the suffix that turns a flat environment variable into a per-agent one.
-
-    Hyphens are legal in a name and illegal in a variable, so they become underscores.
-    """
-
-    return validate_agent_name(name).upper().replace("-", "_")
 
 
 def agent_state_dir(name: str) -> Path:

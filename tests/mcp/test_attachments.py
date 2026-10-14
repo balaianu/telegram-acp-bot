@@ -8,7 +8,14 @@ from typing import cast
 
 import pytest
 
-from tests.mcp.support import STATE_FILE_ENV, TOKEN_ENV, mcp_channel, save_last_session_id, save_session_chat_map
+from tests.mcp.support import (
+    AGENT_NAME_ENV,
+    STATE_FILE_ENV,
+    TOKEN_ENV,
+    mcp_channel,
+    save_last_session_id,
+    save_session_chat_map,
+)
 
 
 @pytest.mark.asyncio
@@ -189,6 +196,25 @@ async def test_fetch_attachment_writes_into_the_working_directory(
     assert path.read_bytes() == b"jpeg-bytes"
     assert result["mime_type"] == "image/jpeg"
     assert result["bytes"] == len(b"jpeg-bytes")
+
+
+@pytest.mark.asyncio
+async def test_fetch_attachment_namespaces_media_by_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, channel_env: Path
+):
+    """A named agent writes under .telegram-media/<agent>, so two agents never share a file."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv(AGENT_NAME_ENV, "qoder")
+    bot = make_download_bot(mocker, b"jpeg-bytes")
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    result = await mcp_channel.telegram_fetch_attachment(session_id="s1", file_id="f1", mime_type="image/jpeg")
+
+    assert result["ok"] is True
+    path = Path(cast(str, result["path"]))
+    assert path.parent == workspace / mcp_channel.DEFAULT_MEDIA_DIRNAME / "qoder"
 
 
 @pytest.mark.asyncio

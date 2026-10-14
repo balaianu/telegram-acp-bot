@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 from tempfile import gettempdir, mkstemp
 
-from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, agent_state_dir, env_suffix
+from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME, agent_state_dir
 
 STATE_FILE_ENV = "ACP_TELEGRAM_CHANNEL_STATE_FILE"
 TOKEN_ENV = "ACP_TELEGRAM_BOT_TOKEN"
+AGENT_NAME_ENV = "ACP_TELEGRAM_AGENT_NAME"
 STATE_FILE_MODE = 0o600
 MAX_PENDING_MEDIA_PER_CHAT = 20
 PER_AGENT_STATE_FILE_NAME = "channel-state.json"
@@ -22,26 +23,20 @@ def default_state_file(*, pid: int) -> Path:
     return Path(gettempdir()) / f"telegram-acp-bot-mcp-state-{pid}.json"
 
 
-def resolve_state_file(*, name: str | None = None, pid: int) -> Path:
+def resolve_state_file(*, name: str | None = None, pid: int, override: str | Path | None = None) -> Path:
     """Return the state file of one agent, honouring an explicit override.
 
-    A named agent is pinned by `ACP_TELEGRAM_CHANNEL_STATE_FILE_<NAME>`, then falls
-    back to a directory per agent so two bots in one process never route through the
-    same file. The unprefixed `ACP_TELEGRAM_CHANNEL_STATE_FILE` only applies to the
-    implicit `default` agent, which keeps an existing single-agent deployment on its
-    current path. With no name at all the file stays scoped to the pid, which
-    keeps concurrent runs isolated but discards everything it holds on exit.
+    All routing state comes from the config file, never the ambient environment. A
+    named agent keeps its state in a directory of its own so two bots in one process
+    never route through the same file. The `default` agent, and a run with no name at
+    all, fall back to a file scoped to the pid, which keeps concurrent runs isolated but
+    discards everything it holds on exit. `override` pins one agent's path exactly, which
+    is how a single-bot deployment carries routing state across restarts.
     """
 
-    if name is not None:
-        pinned = os.getenv(f"{STATE_FILE_ENV}_{env_suffix(name)}", "").strip()
-        if pinned:
-            return Path(pinned).expanduser()
-    if name in (None, DEFAULT_AGENT_NAME):
-        configured = os.getenv(STATE_FILE_ENV, "").strip()
-        if configured:
-            return Path(configured).expanduser()
-    if name is not None:
+    if override is not None and str(override).strip():
+        return Path(str(override).strip()).expanduser()
+    if name is not None and name != DEFAULT_AGENT_NAME:
         return agent_state_dir(name) / PER_AGENT_STATE_FILE_NAME
     return default_state_file(pid=pid)
 

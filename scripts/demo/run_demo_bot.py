@@ -154,6 +154,7 @@ def main() -> int:
         extra_mcp_servers={},
         channel_state_file=default_state_file(pid=os.getpid()),
         scheduled_tasks_db=default_scheduled_tasks_db_path(name=DEMO_AGENT_NAME),
+        allow_path_inputs=False,
         restart_command_parts=None,
     )
     stop_event = asyncio.Event()

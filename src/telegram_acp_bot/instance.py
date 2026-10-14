@@ -14,7 +14,8 @@ from acp.schema import EnvVariable, HttpHeader, HttpMcpServer, McpServerStdio
 from telegram_acp_bot.acp.models import ActivityMode, PermissionEventOutput, PermissionMode
 from telegram_acp_bot.acp.service import AcpAgentService
 from telegram_acp_bot.core.session_registry import SessionRegistry
-from telegram_acp_bot.mcp.state import STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.mcp.state import AGENT_NAME_ENV, STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.mcp.tools.attachments import ALLOW_PATH_ENV
 from telegram_acp_bot.scheduled_tasks import (
     ACP_SCHEDULED_TASKS_DB_ENV,
     ScheduledTaskRunner,
@@ -51,6 +52,7 @@ class BotInstanceSpec:
     extra_mcp_servers: dict[str, Any]
     channel_state_file: Path
     scheduled_tasks_db: Path
+    allow_path_inputs: bool
     restart_command_parts: tuple[str, ...] | None
 
 
@@ -71,11 +73,36 @@ class BotInstance:
     stop_event: asyncio.Event
 
 
-def build_mcp_servers(
+def build_channel_env(
     *,
     telegram_token: str,
     state_file: Path,
     scheduled_tasks_db: Path,
+    allow_path_inputs: bool,
+    agent_name: str,
+) -> dict[str, str]:
+    """Return the internal env one instance hands to its ``telegram-channel`` MCP server.
+
+    This is the single source of truth for the bot-to-child plumbing: the same mapping is
+    injected as the declared ``mcpServers`` env and layered over the ACP subprocess spawn
+    env, so agent2's server can never read agent1's token, state file or media directory.
+    """
+    return {
+        TOKEN_ENV: telegram_token,
+        STATE_FILE_ENV: str(state_file),
+        ACP_SCHEDULED_TASKS_DB_ENV: str(scheduled_tasks_db),
+        ALLOW_PATH_ENV: "1" if allow_path_inputs else "0",
+        AGENT_NAME_ENV: agent_name,
+    }
+
+
+def build_mcp_servers(  # noqa: PLR0913
+    *,
+    telegram_token: str,
+    state_file: Path,
+    scheduled_tasks_db: Path,
+    allow_path_inputs: bool,
+    agent_name: str,
     extra_servers: Mapping[str, Any] | None = None,
 ) -> tuple[McpServerStdio | HttpMcpServer, ...]:
     """Return MCP servers to expose to the ACP agent.
@@ -88,15 +115,18 @@ def build_mcp_servers(
     that case, the external server replaces the internal entry and keeps its
     position in the resulting tuple.
     """
+    channel_env = build_channel_env(
+        telegram_token=telegram_token,
+        state_file=state_file,
+        scheduled_tasks_db=scheduled_tasks_db,
+        allow_path_inputs=allow_path_inputs,
+        agent_name=agent_name,
+    )
     internal = McpServerStdio(
         name="telegram-channel",
         command=sys.executable,
         args=["-m", "telegram_acp_bot.mcp.server"],
-        env=[
-            EnvVariable(name=TOKEN_ENV, value=telegram_token),
-            EnvVariable(name=STATE_FILE_ENV, value=str(state_file)),
-            EnvVariable(name=ACP_SCHEDULED_TASKS_DB_ENV, value=str(scheduled_tasks_db)),
-        ],
+        env=[EnvVariable(name=k, value=v) for k, v in channel_env.items()],
     )
     servers: dict[str, McpServerStdio | HttpMcpServer] = {"telegram-channel": internal}
     for name, defn in (extra_servers or {}).items():
@@ -144,9 +174,18 @@ def build_bot_instance(spec: BotInstanceSpec, *, stop_event: asyncio.Event) -> B
             telegram_token=spec.token,
             state_file=spec.channel_state_file,
             scheduled_tasks_db=spec.scheduled_tasks_db,
+            allow_path_inputs=spec.allow_path_inputs,
+            agent_name=spec.name,
             extra_servers=spec.extra_mcp_servers,
         ),
         channel_state_file=spec.channel_state_file,
+        spawn_env=build_channel_env(
+            telegram_token=spec.token,
+            state_file=spec.channel_state_file,
+            scheduled_tasks_db=spec.scheduled_tasks_db,
+            allow_path_inputs=spec.allow_path_inputs,
+            agent_name=spec.name,
+        ),
         stdio_limit=spec.stdio_limit,
         connect_timeout=spec.connect_timeout,
     )

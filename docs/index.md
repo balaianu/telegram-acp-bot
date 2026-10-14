@@ -94,7 +94,10 @@ Telegram ACP bot is a full-featured, [open-source](https://github.com/mgaitan/te
 Start with:
 
 ```bash
-TELEGRAM_BOT_TOKEN=123456:abc ACP_AGENT_COMMAND="your acp capable agent" uvx telegram-acp-bot
+uvx telegram-acp-bot \
+  --telegram-token 123456:abc \
+  --agent-command "your acp capable agent" \
+  --allowed-user-id 123456789
 ```
 
 ## Feature Highlights
