@@ -602,6 +602,7 @@ def make_update(  # noqa: PLR0913
     *,
     user_id: int = 1,
     username: str | None = None,
+    is_bot: bool = False,
     chat_id: int = 100,
     text: str | None = None,
     caption: str | None = None,
@@ -629,7 +630,7 @@ def make_update(  # noqa: PLR0913
         else None
     )
     return SimpleNamespace(
-        effective_user=SimpleNamespace(id=user_id, username=username),
+        effective_user=SimpleNamespace(id=user_id, username=username, is_bot=is_bot),
         effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
         message=message,
     )

@@ -472,6 +472,17 @@ allows bot-to-bot traffic (BotFather → the bot → Bot-to-Bot Communication Mo
 rights), and each hears the other under its `@username` — so both are on the allowlist if you want them to
 answer one another.
 
+That exchange is bounded, because an answer written to notify a person is also an answer that keeps a bot
+addressed. The bot counts answers that came from another bot and stops after eight in a row, until someone
+speaks in the group; the next person's message refills the budget. When it stops it says so once, so a quiet
+room reads as a pause rather than a hang. Asking a peer to review something fits inside the budget, a pair of
+agents arguing with nobody watching does not.
+
+A reply is only read as an address when a person sent it. Every answer this bot posts quotes the message that
+triggered it, so treating the quote as an address would keep two bots alive on busy notifications alone — the
+"⏳ Agent is busy" notice replying to a peer's message, which the peer answers, which queues again — with
+neither ever naming the other.
+
 ## Notes
 
 - Session scope is per Telegram chat.

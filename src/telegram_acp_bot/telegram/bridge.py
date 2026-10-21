@@ -104,6 +104,8 @@ from telegram_acp_bot.telegram.constants import (
     ELICITATION_SKIP_TOKEN,
     ELICITATION_SUBMIT_LABEL,
     ELICITATION_SUBMIT_TOKEN,
+    GROUP_BOT_TURN_BUDGET,
+    GROUP_BUDGET_HOLD_TEXT,
     KIND_LABELS,
     MAX_RESTART_ARGS,
     MAX_RESUME_ARGS,
@@ -153,6 +155,13 @@ def _text_mentions_handle(text: str | None, entities: tuple[MessageEntity, ...] 
         entity.type == "mention" and lowered[entity.offset : entity.offset + entity.length] == handle
         for entity in entities or ()
     )
+
+
+def _mentions_handle(message: Message, handle: str) -> bool:
+    """True when a message names this bot, whichever of its text or caption carries the mention."""
+    if _text_mentions_handle(message.text, getattr(message, "entities", None), handle):
+        return True
+    return _text_mentions_handle(message.caption, getattr(message, "caption_entities", None), handle)
 
 
 def _media_references(message: Message) -> tuple[tuple[str, str | None], ...]:
@@ -325,6 +334,11 @@ class TelegramBridge:
         # Background task that paints the current label onto the single status message per chat.
         self._compact_status_tasks: dict[int, asyncio.Task[None]] = {}
         self._suppressed_activity_chats: set[int] = set()
+        # Answers one bot drew out of another since a human last spoke in that chat, so a group of
+        # bots cannot keep each other busy for ever. See {py:meth}`_reserve_bot_turn`.
+        self._bot_turns_by_chat: dict[int, int] = {}
+        # Chats that already saw the hold notice since the last human message.
+        self._bot_budget_notified: set[int] = set()
         # Form the bot offered per pending elicitation, so a later tap can re-render the same keyboard.
         self._elicitation_forms: dict[str, ElicitationRequest] = {}
         # Option indexes chosen per pending elicitation, keyed by the schema field being answered.
@@ -2199,30 +2213,70 @@ class TelegramBridge:
         """True when a group message must be skipped because it does not target the bot.
 
         Implements {py:attr}`BotConfig.group_require_mention`: private chats always answer,
-        group chats only when the bot is @mentioned (or the message replies to the bot).
+        group chats only when the bot is @mentioned (or a person replies to the bot).
 
         The anchor message is read rather than `update.message`, because a compact-mode answer
         arrives as an edit of the status bubble and would otherwise look like an unaddressed post.
+
+        A reply only counts as an address when a person sent it. Every answer this bot posts is a
+        reply to the message that triggered it, so honouring the quote from a bot would let two
+        agents sustain a conversation on the quote alone — which is how a busy notification kept
+        redrawing the peer in a shared group.
         """
         chat = update.effective_chat
         if getattr(chat, "type", None) not in GROUP_CHAT_TYPES:
             return False
 
+        chat_id = chat.id if chat is not None else None
+        sender_is_bot = bool(getattr(update.effective_user, "is_bot", False))
+        if not sender_is_bot and chat_id is not None:
+            self._bot_turns_by_chat.pop(chat_id, None)
+            self._bot_budget_notified.discard(chat_id)
+
         message = self._anchor_message(update)
         handle = _bot_handle(context)
+        addressed = False
         if message is not None and handle:
-            if _text_mentions_handle(message.text, getattr(message, "entities", None), handle):
-                return False
-            if _text_mentions_handle(message.caption, getattr(message, "caption_entities", None), handle):
-                return False
-            author = getattr(message.reply_to_message, "from_user", None)
-            replied_username = getattr(author, "username", None) or ""
-            if replied_username.lstrip("@").strip().lower() == handle:
-                return False
+            addressed = _mentions_handle(message, handle)
+            if not addressed and not sender_is_bot:
+                author = getattr(message.reply_to_message, "from_user", None)
+                replied_username = getattr(author, "username", None) or ""
+                addressed = replied_username.lstrip("@").strip().lower() == handle
 
-        chat_id = chat.id if chat is not None else None
+        if addressed and sender_is_bot and chat_id is not None and not self._reserve_bot_turn(chat_id):
+            return True
+        if addressed:
+            return False
+
         logger.info("Group message in chat=%s ignored: no @%s mention", chat_id, handle)
         return True
+
+    def _reserve_bot_turn(self, chat_id: int) -> bool:
+        """Spend one turn of the bot-to-bot budget, refusing the exchange once it is spent.
+
+        Two agents that address each other by name, as {py:data}`GROUP_MENTION_REMINDER` tells them
+        to, hand the conversation back and forth with no human in the loop. The budget bounds that
+        exchange without forbidding it, and the next person's message refills it.
+        """
+        used = self._bot_turns_by_chat.get(chat_id, 0)
+        if used >= GROUP_BOT_TURN_BUDGET:
+            logger.info("Group message in chat=%s ignored: bot-to-bot turn budget spent", chat_id)
+            return False
+        self._bot_turns_by_chat[chat_id] = used + 1
+        return True
+
+    async def _announce_bot_turn_hold(self, update: Update) -> None:
+        """Say once why the exchange stopped, since two bots going quiet looks like a hang."""
+        message = update.message
+        chat = update.effective_chat
+        if message is None or chat is None:
+            return
+        if self._bot_turns_by_chat.get(chat.id, 0) < GROUP_BOT_TURN_BUDGET:
+            return
+        if chat.id in self._bot_budget_notified:
+            return
+        self._bot_budget_notified.add(chat.id)
+        await self._reply(update, GROUP_BUDGET_HOLD_TEXT)
 
     async def _silently_shelve_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """True when the mention rule hides this message, which is then queued or dropped without a reply.
@@ -2237,6 +2291,7 @@ class TelegramBridge:
             return False
         if self._config.group_media_queue:
             await self._queue_unclaimed_group_media(update=update)
+        await self._announce_bot_turn_hold(update)
         return True
 
     async def _queue_unclaimed_group_media(self, *, update: Update) -> None:

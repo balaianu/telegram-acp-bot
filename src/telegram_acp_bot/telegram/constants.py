@@ -17,6 +17,9 @@ ELICITATION_CALLBACK_PARTS = 3
 BUSY_SENT_TEXT = "✅ Sent."
 BUSY_QUEUED_TEXT = "⏳ Agent is busy. Your message is queued."
 BUSY_STILL_QUEUED_TEXT = "Still queued."
+# How many answers one bot may draw out of another in one group before a human has to speak again.
+GROUP_BOT_TURN_BUDGET = 8
+GROUP_BUDGET_HOLD_TEXT = "⏸️ Pausing the bot-to-bot exchange here — a human message resumes it."
 MAX_RESUME_ARGS = 1
 MAX_RESTART_ARGS = 2
 RESUME_KEYBOARD_MAX_ROWS = 10
