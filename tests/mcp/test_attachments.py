@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from telegram_acp_bot.mcp.tools import attachments as attachments_module
 from tests.mcp.support import (
     AGENT_NAME_ENV,
     STATE_FILE_ENV,
@@ -303,3 +304,122 @@ def test_default_media_name_uses_the_digest_and_a_known_extension():
     assert unnamed == named[: -len(".png")]
     assert vague == unnamed
     assert "f1" not in named
+
+
+def test_route_media_kind_maps_mime_to_delivery():
+    assert attachments_module.route_media_kind("image/png") == "photo"
+    assert attachments_module.route_media_kind("video/mp4") == "video"
+    assert attachments_module.route_media_kind("audio/mpeg") == "audio"
+    assert attachments_module.route_media_kind("application/pdf") == "document"
+
+
+def test_build_send_specs_rejects_mixing_top_level_and_attachments():
+    result = attachments_module.build_send_specs(
+        path="a.jpg",
+        data_base64=None,
+        name=None,
+        mime_type=None,
+        attachments=[{"path": "b.jpg"}],
+    )
+    assert result == attachments_module.MIXED_TOP_LEVEL_AND_ATTACHMENTS_ERROR
+
+
+def test_build_send_specs_rejects_empty_attachments_list():
+    assert (
+        attachments_module.build_send_specs(path=None, data_base64=None, name=None, mime_type=None, attachments=[])
+        == attachments_module.EMPTY_ATTACHMENTS_ERROR
+    )
+
+
+def test_build_send_specs_wraps_a_single_source():
+    specs = attachments_module.build_send_specs(
+        path="a.jpg", data_base64=None, name="x", mime_type="image/jpeg", attachments=None
+    )
+    assert specs == [{"path": "a.jpg", "name": "x", "mime_type": "image/jpeg"}]
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_routes_video_natively(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker):
+    state_file = tmp_path / "state.json"
+    video_file = tmp_path / "clip.mp4"
+    video_file.write_bytes(b"mp4")
+    save_session_chat_map(state_file, {"s1": 123})
+    monkeypatch.setenv(TOKEN_ENV, "TOKEN")
+    monkeypatch.setenv(STATE_FILE_ENV, str(state_file))
+    monkeypatch.setenv(mcp_channel.ALLOW_PATH_ENV, "1")
+    bot = mocker.AsyncMock()
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    result = await mcp_channel.telegram_send_attachment(path=str(video_file))
+
+    assert result["ok"] is True
+    assert result["delivered_as"] == "video"
+    bot.send_video.assert_awaited_once()
+    bot.send_document.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_routes_audio_natively(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker):
+    state_file = tmp_path / "state.json"
+    save_session_chat_map(state_file, {"s1": 123})
+    monkeypatch.setenv(TOKEN_ENV, "TOKEN")
+    monkeypatch.setenv(STATE_FILE_ENV, str(state_file))
+    bot = mocker.AsyncMock()
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    result = await mcp_channel.telegram_send_attachment(
+        data_base64=base64.b64encode(b"id3").decode("ascii"), name="song.mp3"
+    )
+
+    assert result["ok"] is True
+    assert result["delivered_as"] == "audio"
+    bot.send_audio.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_sends_multiple_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker):
+    state_file = tmp_path / "state.json"
+    photo = tmp_path / "a.jpg"
+    photo.write_bytes(b"jpeg")
+    doc = tmp_path / "report.pdf"
+    doc.write_bytes(b"%PDF")
+    save_session_chat_map(state_file, {"s1": 123})
+    monkeypatch.setenv(TOKEN_ENV, "TOKEN")
+    monkeypatch.setenv(STATE_FILE_ENV, str(state_file))
+    monkeypatch.setenv(mcp_channel.ALLOW_PATH_ENV, "1")
+    bot = mocker.AsyncMock()
+    mocker.patch("telegram_acp_bot.mcp.tools.attachments.Bot", return_value=bot)
+
+    attachments = [{"path": str(photo)}, {"path": str(doc)}]
+    result = await mcp_channel.telegram_send_attachment(attachments=attachments)
+
+    assert result["ok"] is True
+    assert result["count"] == len(attachments)
+    assert "delivered_as" not in result
+    kinds = [item["delivered_as"] for item in result["delivered"]]
+    assert kinds == ["photo", "document"]
+    bot.send_photo.assert_awaited_once()
+    bot.send_document.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_requires_a_source():
+    result = await mcp_channel.telegram_send_attachment()
+    assert result["ok"] is False
+    assert result["error"] == attachments_module.EXACTLY_ONE_ATTACHMENT_SOURCE_ERROR
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_reports_path_disabled_for_any_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    state_file = tmp_path / "state.json"
+    save_session_chat_map(state_file, {"s1": 123})
+    monkeypatch.setenv(TOKEN_ENV, "TOKEN")
+    monkeypatch.setenv(STATE_FILE_ENV, str(state_file))
+    monkeypatch.delenv(mcp_channel.ALLOW_PATH_ENV, raising=False)
+
+    result = await mcp_channel.telegram_send_attachment(attachments=[{"path": str(tmp_path / "a.jpg")}])
+
+    assert result["ok"] is False
+    assert "`path` input is disabled by default" in cast(str, result["error"])

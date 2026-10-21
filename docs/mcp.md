@@ -29,7 +29,7 @@ The built-in server currently exposes six tools.
 
 `telegram_channel_info` is a lightweight capability probe. It lets the agent confirm what this Telegram channel integration can currently do.
 
-`telegram_send_attachment` lets the agent deliver a file or image to the current Telegram chat. This is the tool behind flows like “send me the generated screenshot” or “upload the review artifact”.
+`telegram_send_attachment` lets the agent deliver one or more files (image, video, audio, or any document) to the current Telegram chat. This is the tool behind flows like “send me the generated screenshot” or “upload the review artifact”.
 
 `telegram_fetch_attachment` lets the agent download media that Telegram announced as pending, by `file_id`, into its own workspace. This is the counterpart of the lazy inbound path described under `telegram.group_media_queue`.
 
@@ -84,17 +84,40 @@ For configuration details, see {doc}`configuration` and {ref}`mcp-channel-enviro
 (mcp-feature-attachments)=
 ## Reply With Attachments
 
-`telegram_send_attachment` accepts either a base64 payload or, when explicitly enabled, a trusted local path. This is the feature behind flows where the agent answers not only with text, but also with a file or image sent back to Telegram. A typical call looks like this:
+`telegram_send_attachment` delivers one or more files back to the current Telegram chat. This is the feature behind flows where the agent answers not only with text, but also with a file, image, video or audio clip.
+
+Pick the input by where the bytes already live:
+
+- If the content is already a file on disk, pass its location with `path`. Do **not** read the file and hand-encode it into `data_base64` — that only bloats the agent context. The `path` input is disabled by default and must be enabled with {term}`ACP_TELEGRAM_CHANNEL_ALLOW_PATH` (or `acp.allow_path_inputs`).
+- Use `data_base64` only for bytes you produced in memory and never wrote to disk. Pair it with `name` so the type can be inferred from the extension.
+
+Delivery is chosen from the MIME type so media plays natively in Telegram instead of arriving as a plain file download:
+
+| MIME prefix | Sent as |
+| ----------- | ------- |
+| `image/*` | photo |
+| `video/*` | video |
+| `audio/*` | audio |
+| anything else | document |
+
+Pass `mime_type` to force a specific type. A typical single-file call looks like this:
 
 ```text
 telegram_send_attachment(
-  data_base64="...",
-  name="review.png",
-  mime_type="image/png"
+  path="artifacts/review.png"
 )
 ```
 
-If the MIME type resolves to `image/*`, the server sends a Telegram photo. Otherwise it sends a document. In most deployments, `data_base64` is the safer default. The `path` input is intentionally disabled unless `acp.allow_path_inputs` is enabled.
+To send several files in one call, pass `attachments` as a list, each entry taking the same `path` / `data_base64` / `name` / `mime_type` fields (do not combine `attachments` with the top-level `path` / `data_base64`). Each item is routed independently:
+
+```text
+telegram_send_attachment(
+  attachments=[
+    {"path": "clip.mp4"},
+    {"path": "transcript.txt"},
+  ]
+)
+```
 
 (mcp-feature-fetching)=
 ## Fetch Pending Media
