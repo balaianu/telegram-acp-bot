@@ -99,6 +99,8 @@ def _spec_for(
     return BotInstanceSpec(
         name=name,
         token=_token_for(name, section=section, fallback=base.token),
+        mtproto_api_id=_optional_int_overlay(telegram_cfg.get("api_id"), base.mtproto_api_id),
+        mtproto_api_hash=str(telegram_cfg.get("api_hash", base.mtproto_api_hash)),
         allowed_user_ids=_ids_overlay(telegram_cfg.get("allowed_user_ids"), base.allowed_user_ids),
         allowed_usernames=_usernames_overlay(telegram_cfg.get("allowed_usernames"), base.allowed_usernames),
         workspace=acp_cfg.get("workspace", base.workspace),
@@ -181,6 +183,14 @@ def _ids_overlay(configured: object, inherited: tuple[int, ...]) -> tuple[int, .
     if not isinstance(configured, list):
         return inherited
     return tuple(int(value) for value in configured)
+
+
+def _optional_int_overlay(configured: object, inherited: int | None) -> int | None:
+    """Overlay one optional integer, treating a configured `null` as "unset"."""
+
+    if isinstance(configured, int):
+        return int(configured)
+    return inherited
 
 
 def _usernames_overlay(configured: object, inherited: tuple[str, ...]) -> tuple[str, ...]:

@@ -138,6 +138,8 @@ def main() -> int:
     spec = BotInstanceSpec(
         name=DEMO_AGENT_NAME,
         token=token,
+        mtproto_api_id=None,
+        mtproto_api_hash="",
         allowed_user_ids=tuple(allowed_user_ids),
         allowed_usernames=tuple(allowed_usernames),
         workspace=args.workspace,

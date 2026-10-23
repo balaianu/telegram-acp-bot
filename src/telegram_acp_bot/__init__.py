@@ -55,6 +55,25 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--telegram-token", default="", help="Telegram bot token")
     parser.add_argument(
+        "--telegram-api-id",
+        default=None,
+        type=int,
+        help=(
+            "Telegram API id from my.telegram.org; enables MTProto file transfers beyond the "
+            "Bot API limits (`telegram_download_file` for files over 20 MB, `telegram_send_attachment` "
+            "for uploads over 50 MB, up to 2 GB). "
+            "Also set by `telegram.api_id`; pair it with --telegram-api-hash."
+        ),
+    )
+    parser.add_argument(
+        "--telegram-api-hash",
+        default="",
+        help=(
+            "Telegram API hash from my.telegram.org; required together with --telegram-api-id. "
+            "Also set by `telegram.api_hash`."
+        ),
+    )
+    parser.add_argument(
         "--agent-command",
         default="",
         help="ACP agent command line, e.g. 'codex-acp' or 'uv run examples/echo_agent.py'.",
@@ -215,6 +234,8 @@ def _apply_config_file_defaults(
     # String settings: config file > hardcoded default in add_argument
     _str_map: list[tuple[str, Any]] = [
         ("telegram_token", tg.get("bot_token")),
+        ("telegram_api_id", tg.get("api_id")),
+        ("telegram_api_hash", tg.get("api_hash")),
         ("agent_command", acp_cfg.get("agent_command")),
         ("restart_command", acp_cfg.get("restart_command")),
         ("permission_mode", acp_cfg.get("permission_mode")),
@@ -335,6 +356,8 @@ def _base_spec(
     return BotInstanceSpec(
         name=DEFAULT_AGENT_NAME,
         token=opts.telegram_token,
+        mtproto_api_id=opts.telegram_api_id,
+        mtproto_api_hash=opts.telegram_api_hash,
         allowed_user_ids=tuple(allowed_user_ids),
         allowed_usernames=tuple(allowed_usernames),
         workspace=opts.workspace,

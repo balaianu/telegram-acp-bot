@@ -49,6 +49,8 @@ follow the XDG Base Directory specification like any other Linux program.
 {
   "telegram": {
     "bot_token": "123456:abc",
+    "api_id": 12345,
+    "api_hash": "0123456789abcdef0123456789abcdef",
     "allowed_user_ids": [123456789],
     "allowed_usernames": ["alice", "@bob"],
     "schedule_languages": ["en", "es"],
@@ -189,6 +191,8 @@ Key flags and their config file equivalents:
 |---|---|
 | `--config` | — (selects the file) |
 | `--telegram-token` | `telegram.bot_token` |
+| `--telegram-api-id` | `telegram.api_id` |
+| `--telegram-api-hash` | `telegram.api_hash` |
 | `--allowed-user-id` | `telegram.allowed_user_ids` |
 | `--allowed-username` | `telegram.allowed_usernames` |
 | `--schedule-language` | `telegram.schedule_languages` |
@@ -274,6 +278,18 @@ agents in one process can never read each other's values.
 ACP_TELEGRAM_BOT_TOKEN
   The token this instance's internal MCP server uses when calling the Telegram Bot API.
   Injected per agent, so each server speaks for its own bot.
+
+ACP_TELEGRAM_API_ID
+  The Telegram API id of the app whose credentials enable MTProto file transfers:
+  the MCP `telegram_download_file` tool for files beyond the 20 MB Bot API download
+  cap, and `telegram_send_attachment` for uploads beyond 50 MB, up to 2 GB each way.
+  Injected, together with `ACP_TELEGRAM_API_HASH`, only when both `telegram.api_id`
+  and `telegram.api_hash` are set; without the pair the tools answer with a
+  configuration error instead of attempting a transfer the Bot API cannot finish.
+
+ACP_TELEGRAM_API_HASH
+  The Telegram API hash paired with `ACP_TELEGRAM_API_ID`. Injected under the same
+  condition, so the large-file capabilities exist exactly where they were configured.
 
 ACP_TELEGRAM_CHANNEL_STATE_FILE
   Path to the MCP channel shared state file (`session_id -> chat_id`, pending media, last

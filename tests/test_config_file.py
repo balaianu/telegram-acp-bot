@@ -76,6 +76,27 @@ def test_telegram_bot_token_not_string(tmp_path: Path) -> None:
         load_config_file(write_config(tmp_path, {"telegram": {"bot_token": 123}}))
 
 
+def test_telegram_api_id_not_integer(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.api_id' must be a non-negative integer"):
+        load_config_file(write_config(tmp_path, {"telegram": {"api_id": "12345"}}))
+
+
+def test_telegram_api_id_rejects_booleans(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.api_id' must be a non-negative integer"):
+        load_config_file(write_config(tmp_path, {"telegram": {"api_id": True}}))
+
+
+def test_telegram_api_hash_not_string(tmp_path: Path) -> None:
+    with pytest.raises(ConfigFileError, match=r"'telegram\.api_hash' must be a string"):
+        load_config_file(write_config(tmp_path, {"telegram": {"api_hash": 12345}}))
+
+
+def test_telegram_api_credentials_are_accepted_together(tmp_path: Path) -> None:
+    data = {"telegram": {"api_id": 12345, "api_hash": "deadbeef"}}
+
+    assert load_config_file(write_config(tmp_path, data)) == data
+
+
 def test_telegram_allowed_user_ids_not_list(tmp_path: Path) -> None:
     with pytest.raises(ConfigFileError, match=r"'telegram\.allowed_user_ids' must be a list"):
         load_config_file(write_config(tmp_path, {"telegram": {"allowed_user_ids": "1,2"}}))

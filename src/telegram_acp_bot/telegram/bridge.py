@@ -177,7 +177,9 @@ def _media_references(message: Message) -> tuple[tuple[str, str | None], ...]:
 
 PENDING_MEDIA_HEADER = (
     "Pending Telegram attachments (not downloaded yet). "
-    "Call telegram_fetch_attachment with a file_id when you actually need one. "
+    "Call telegram_fetch_attachment with a file_id when you actually need one, or "
+    "telegram_download_file with the message_id when the file is larger than 20 MB, "
+    "which the Bot API refuses to serve. "
     "Telegram keeps a media file downloadable for roughly an hour after it arrives, "
     "so fetch the ones you need now:"
 )

@@ -9,7 +9,7 @@ from pathlib import Path
 from acp.schema import HttpMcpServer, McpServerStdio
 
 from telegram_acp_bot.instance import build_bot_instance, build_channel_env, build_mcp_servers
-from telegram_acp_bot.mcp.state import AGENT_NAME_ENV, STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.mcp.state import AGENT_NAME_ENV, API_HASH_ENV, API_ID_ENV, STATE_FILE_ENV, TOKEN_ENV
 from telegram_acp_bot.mcp.tools.attachments import ALLOW_PATH_ENV
 from telegram_acp_bot.scheduled_tasks import ACP_SCHEDULED_TASKS_DB_ENV, ScheduledTaskScheduler, ScheduledTaskStore
 from telegram_acp_bot.telegram.bridge import TelegramBridge
@@ -58,6 +58,36 @@ def test_build_bot_instance_starts_the_declared_agent_command():
 
     assert instance.service._program == "qodercli"
     assert instance.service._args == ["--acp", "--yolo"]
+
+
+def test_build_channel_env_forwards_the_mtproto_credentials_when_both_are_set():
+    channel_env = build_channel_env(
+        telegram_token=OTHER_TOKEN,
+        state_file=EXTRA_STATE,
+        scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=False,
+        agent_name="qoder",
+        mtproto_api_id=12345,
+        mtproto_api_hash="  hash  ",
+    )
+
+    assert channel_env[API_ID_ENV] == "12345"
+    assert channel_env[API_HASH_ENV] == "hash"
+
+
+def test_build_channel_env_omits_the_mtproto_credentials_when_incomplete():
+    env = build_channel_env(
+        telegram_token=OTHER_TOKEN,
+        state_file=EXTRA_STATE,
+        scheduled_tasks_db=EXTRA_DB,
+        allow_path_inputs=False,
+        agent_name="qoder",
+        mtproto_api_id=12345,
+        mtproto_api_hash="",
+    )
+
+    assert API_ID_ENV not in env
+    assert API_HASH_ENV not in env
 
 
 def test_build_bot_instance_isolates_the_spawn_env_to_this_agent(tmp_path: Path):

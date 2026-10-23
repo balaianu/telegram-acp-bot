@@ -16,6 +16,9 @@ QODER_TOKEN = "111:qoder"
 CLAUDE_TOKEN = "222:claude"
 BASE_DB = Path("/base/scheduled-tasks.sqlite3")
 BASE_STATE = Path("/base/channel-state.json")
+BASE_API_ID = 12345
+AGENT_API_ID = 999
+AGENT_API_HASH = "other-hash"
 AGENT_STDIO_LIMIT = 1024
 AGENT_CONNECT_TIMEOUT = 5.0
 AGENT_GROUP_HISTORY_SIZE = 40
@@ -27,6 +30,8 @@ def base_spec(**overrides: object) -> BotInstanceSpec:
     spec = BotInstanceSpec(
         name="default",
         token=QODER_TOKEN,
+        mtproto_api_id=None,
+        mtproto_api_hash="",
         allowed_user_ids=(1,),
         allowed_usernames=("someone",),
         workspace="/workspace",
@@ -162,6 +167,27 @@ def test_an_empty_restart_command_does_not_hide_the_base_one():
     )
 
     assert spec.restart_command_parts == ("botctl", "restart")
+
+
+def test_an_agent_inherits_the_base_mtproto_credentials():
+    base = base_spec(mtproto_api_id=BASE_API_ID, mtproto_api_hash="hash")
+
+    (spec,) = resolve(base=base, agents={"qoder": {"telegram": {"bot_token": QODER_TOKEN}}})
+
+    assert spec.mtproto_api_id == BASE_API_ID
+    assert spec.mtproto_api_hash == "hash"
+
+
+def test_an_agent_overrides_the_mtproto_credentials():
+    base = base_spec(mtproto_api_id=BASE_API_ID, mtproto_api_hash="hash")
+
+    (spec,) = resolve(
+        base=base,
+        agents={"qoder": {"telegram": {"bot_token": QODER_TOKEN, "api_id": AGENT_API_ID, "api_hash": AGENT_API_HASH}}},
+    )
+
+    assert spec.mtproto_api_id == AGENT_API_ID
+    assert spec.mtproto_api_hash == AGENT_API_HASH
 
 
 def test_agent_token_falls_back_to_the_base_token():

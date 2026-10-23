@@ -14,7 +14,7 @@ from acp.schema import EnvVariable, HttpHeader, HttpMcpServer, McpServerStdio
 from telegram_acp_bot.acp.models import ActivityMode, PermissionEventOutput, PermissionMode
 from telegram_acp_bot.acp.service import AcpAgentService
 from telegram_acp_bot.core.session_registry import SessionRegistry
-from telegram_acp_bot.mcp.state import AGENT_NAME_ENV, STATE_FILE_ENV, TOKEN_ENV
+from telegram_acp_bot.mcp.state import AGENT_NAME_ENV, API_HASH_ENV, API_ID_ENV, STATE_FILE_ENV, TOKEN_ENV
 from telegram_acp_bot.mcp.tools.attachments import ALLOW_PATH_ENV
 from telegram_acp_bot.scheduled_tasks import (
     ACP_SCHEDULED_TASKS_DB_ENV,
@@ -36,6 +36,8 @@ class BotInstanceSpec:
 
     name: str
     token: str
+    mtproto_api_id: int | None
+    mtproto_api_hash: str
     allowed_user_ids: tuple[int, ...]
     allowed_usernames: tuple[str, ...]
     workspace: str
@@ -74,27 +76,36 @@ class BotInstance:
     stop_event: asyncio.Event
 
 
-def build_channel_env(
+def build_channel_env(  # noqa: PLR0913
     *,
     telegram_token: str,
     state_file: Path,
     scheduled_tasks_db: Path,
     allow_path_inputs: bool,
     agent_name: str,
+    mtproto_api_id: int | None = None,
+    mtproto_api_hash: str = "",
 ) -> dict[str, str]:
     """Return the internal env one instance hands to its ``telegram-channel`` MCP server.
 
     This is the single source of truth for the bot-to-child plumbing: the same mapping is
     injected as the declared ``mcpServers`` env and layered over the ACP subprocess spawn
     env, so agent2's server can never read agent1's token, state file or media directory.
+
+    The MTProto credentials are optional: they only reach the child when both are set,
+    which is what keeps `telegram_download_file` available only where it was configured.
     """
-    return {
+    env = {
         TOKEN_ENV: telegram_token,
         STATE_FILE_ENV: str(state_file),
         ACP_SCHEDULED_TASKS_DB_ENV: str(scheduled_tasks_db),
         ALLOW_PATH_ENV: "1" if allow_path_inputs else "0",
         AGENT_NAME_ENV: agent_name,
     }
+    if mtproto_api_id is not None and mtproto_api_hash.strip():
+        env[API_ID_ENV] = str(mtproto_api_id)
+        env[API_HASH_ENV] = mtproto_api_hash.strip()
+    return env
 
 
 def build_mcp_servers(  # noqa: PLR0913
@@ -105,6 +116,8 @@ def build_mcp_servers(  # noqa: PLR0913
     allow_path_inputs: bool,
     agent_name: str,
     extra_servers: Mapping[str, Any] | None = None,
+    mtproto_api_id: int | None = None,
+    mtproto_api_hash: str = "",
 ) -> tuple[McpServerStdio | HttpMcpServer, ...]:
     """Return MCP servers to expose to the ACP agent.
 
@@ -122,6 +135,8 @@ def build_mcp_servers(  # noqa: PLR0913
         scheduled_tasks_db=scheduled_tasks_db,
         allow_path_inputs=allow_path_inputs,
         agent_name=agent_name,
+        mtproto_api_id=mtproto_api_id,
+        mtproto_api_hash=mtproto_api_hash,
     )
     internal = McpServerStdio(
         name="telegram-channel",
@@ -179,6 +194,8 @@ def build_bot_instance(spec: BotInstanceSpec, *, stop_event: asyncio.Event) -> B
             allow_path_inputs=spec.allow_path_inputs,
             agent_name=spec.name,
             extra_servers=spec.extra_mcp_servers,
+            mtproto_api_id=spec.mtproto_api_id,
+            mtproto_api_hash=spec.mtproto_api_hash,
         ),
         channel_state_file=spec.channel_state_file,
         spawn_env=build_channel_env(
@@ -187,6 +204,8 @@ def build_bot_instance(spec: BotInstanceSpec, *, stop_event: asyncio.Event) -> B
             scheduled_tasks_db=spec.scheduled_tasks_db,
             allow_path_inputs=spec.allow_path_inputs,
             agent_name=spec.name,
+            mtproto_api_id=spec.mtproto_api_id,
+            mtproto_api_hash=spec.mtproto_api_hash,
         ),
         stdio_limit=spec.stdio_limit,
         connect_timeout=spec.connect_timeout,

@@ -110,6 +110,7 @@ def _validate_telegram_section(tg: dict[str, Any], path: Path, where: str = "") 
         raise _err(path, "'telegram' must be a JSON object", where)
     if "bot_token" in tg and not isinstance(tg["bot_token"], str):
         raise _err(path, "'telegram.bot_token' must be a string", where)
+    _validate_api_credentials(tg, path, where)
     if "allowed_user_ids" in tg:
         ids = tg["allowed_user_ids"]
         if not isinstance(ids, list) or not all(type(x) is int for x in ids):
@@ -132,6 +133,15 @@ def _validate_telegram_section(tg: dict[str, Any], path: Path, where: str = "") 
             f" {sorted(_VALID_STATUS_REACTION_LEVELS)}, got {tg['status_reactions']!r}",
             where,
         )
+
+
+def _validate_api_credentials(tg: dict[str, Any], path: Path, where: str = "") -> None:
+    """Validate the optional MTProto pair that enables large-file downloads."""
+
+    if "api_id" in tg:
+        _require_optional_non_negative_int(tg, path, "api_id", where)
+    if "api_hash" in tg and not isinstance(tg["api_hash"], str):
+        raise _err(path, "'telegram.api_hash' must be a string", where)
 
 
 def _require_optional_bool(

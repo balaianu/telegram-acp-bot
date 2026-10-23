@@ -14,10 +14,13 @@ from typing import cast
 
 from mcp.server.fastmcp import FastMCP
 from telegram import Bot, InputFile
+from telethon import TelegramClient
+from telethon.tl import types
 
 from telegram_acp_bot.agent_identity import DEFAULT_AGENT_NAME
-from telegram_acp_bot.mcp.context import resolve_request_context
+from telegram_acp_bot.mcp.context import RequestContext, resolve_request_context
 from telegram_acp_bot.mcp.state import AGENT_NAME_ENV
+from telegram_acp_bot.mcp.tools.mtproto import mtproto_client
 
 ALLOW_PATH_ENV = "ACP_TELEGRAM_CHANNEL_ALLOW_PATH"
 EXACTLY_ONE_ATTACHMENT_SOURCE_ERROR = "provide exactly one of `path` or `data_base64`"
@@ -27,6 +30,7 @@ MIXED_TOP_LEVEL_AND_ATTACHMENTS_ERROR = (
 EMPTY_ATTACHMENTS_ERROR = "`attachments` is empty"
 DEFAULT_MEDIA_DIRNAME = ".telegram-media"
 MEDIA_OUTSIDE_WORKSPACE_ERROR = "`dest` must stay inside the agent working directory"
+BOT_API_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +38,21 @@ class AttachmentPayload:
     raw: bytes
     filename: str
     guessed_mime: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedAttachment:
+    """One attachment resolved and validated, ready to deliver.
+
+    `payload` is `None` exactly when the Bot API cannot carry the file, in which case
+    `file` names the source Telethon streams (a disk path or in-memory bytes).
+    """
+
+    payload: AttachmentPayload | None
+    file: str | BytesIO | None
+    name: str
+    resolved_mime: str
+    size: int
 
 
 def register_attachment_tools(mcp: FastMCP) -> None:
@@ -54,6 +73,10 @@ def register_attachment_tools(mcp: FastMCP) -> None:
             "`image/*` as a photo, `video/*` as a video, `audio/*` as audio, anything else as a "
             "file. Pass `mime_type` to force a type, or `name` when sending base64 so the type can "
             "be inferred from the extension.\n\n"
+            "Files larger than 50 MB cannot ride the Bot API: when `telegram.api_id` and "
+            "`telegram.api_hash` are configured they are streamed over MTProto instead, up to "
+            "2 GB, and the call works the same way. Without those credentials an oversized send "
+            "returns an error asking for them.\n\n"
             "To send several files in one call, pass `attachments` as a list of objects, each with "
             "`path` or `data_base64` plus optional `name` and `mime_type` (do not combine it with "
             "the top-level `path`/`data_base64`)."
@@ -122,12 +145,19 @@ def _media_dirname() -> str:
     return DEFAULT_MEDIA_DIRNAME
 
 
-def resolve_media_target(*, dest: str | None, file_id: str, mime_type: str | None = None) -> Path | str:
+def resolve_media_target(
+    *,
+    dest: str | None,
+    file_id: str,
+    mime_type: str | None = None,
+    default_name: str | None = None,
+) -> Path | str:
     """Resolve where a fetched attachment may be written, keeping it inside the working directory."""
 
     root = Path.cwd().resolve(strict=False)
     if dest is None:
-        return root / _media_dirname() / default_media_name(file_id, mime_type)
+        name = default_name if default_name is not None else default_media_name(file_id, mime_type)
+        return root / _media_dirname() / name
 
     candidate = Path(dest).expanduser()
     resolved = (candidate if candidate.is_absolute() else root / candidate).resolve(strict=False)
@@ -173,33 +203,19 @@ async def telegram_send_attachment(  # noqa: PLR0913, PLR0917
     if isinstance(context, str):
         return fail(context)
 
-    loaded_payloads: list[tuple[AttachmentPayload, str]] = []
+    prepared: list[PreparedAttachment] = []
     for spec in specs:
-        loaded = load_attachment_bytes(
-            path=spec.get("path"), data_base64=spec.get("data_base64"), name=spec.get("name")
-        )
-        if isinstance(loaded, str):
-            return fail(loaded)
-        resolved_mime = spec.get("mime_type") or loaded.guessed_mime or "application/octet-stream"
-        loaded_payloads.append((loaded, resolved_mime))
+        item = prepare_attachment(spec)
+        if isinstance(item, str):
+            return fail(item)
+        prepared.append(item)
 
-    bot = Bot(token=context.token)
     delivered: list[dict[str, object]] = []
-    for payload, resolved_mime in loaded_payloads:
-        delivered_as = await deliver_attachment(
-            bot=bot,
-            chat_id=context.chat_id,
-            payload=payload,
-            resolved_mime=resolved_mime,
-        )
-        delivered.append(
-            {
-                "name": payload.filename,
-                "mime_type": resolved_mime,
-                "delivered_as": delivered_as,
-                "bytes": len(payload.raw),
-            }
-        )
+    for item in prepared:
+        outcome = await deliver_prepared_attachment(bot=Bot(token=context.token), context=context, item=item)
+        if isinstance(outcome, str):
+            return fail(outcome)
+        delivered.append(outcome)
 
     result: dict[str, object] = {
         "ok": True,
@@ -212,6 +228,152 @@ async def telegram_send_attachment(  # noqa: PLR0913, PLR0917
         only = delivered[0]
         result.update({"delivered_as": only["delivered_as"], "name": only["name"], "mime_type": only["mime_type"]})
     return result
+
+
+async def deliver_prepared_attachment(
+    *,
+    bot: Bot,
+    context: RequestContext,
+    item: PreparedAttachment,
+) -> dict[str, object] | str:
+    """Deliver one prepared attachment, over MTProto when the Bot API cannot carry it."""
+
+    if item.payload is None:
+        return await deliver_oversized_attachment(
+            context=context,
+            file=cast("str | BytesIO", item.file),
+            name=item.name,
+            resolved_mime=item.resolved_mime,
+            size=item.size,
+        )
+    delivered_as = await deliver_attachment(
+        bot=bot,
+        chat_id=context.chat_id,
+        payload=item.payload,
+        resolved_mime=item.resolved_mime,
+    )
+    return {
+        "name": item.payload.filename,
+        "mime_type": item.resolved_mime,
+        "delivered_as": delivered_as,
+        "bytes": item.size,
+    }
+
+
+def prepare_attachment(spec: dict[str, str]) -> PreparedAttachment | str:
+    """Validate and resolve one attachment spec, loading bytes the Bot API path needs.
+
+    A file over the 50 MB Bot API cap is never read into memory: it becomes a
+    `PreparedAttachment` that Telethon streams straight from disk.
+    """
+
+    path = spec.get("path")
+    if path is not None:
+        source = Path(path).expanduser().resolve(strict=False)
+        size = attachment_file_size(source)
+        if size is None:
+            return f"file not found: {source}"
+        filename = spec.get("name") or source.name
+        resolved_mime = spec.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        if size > BOT_API_UPLOAD_LIMIT_BYTES:
+            return PreparedAttachment(
+                payload=None, file=str(source), name=filename, resolved_mime=resolved_mime, size=size
+            )
+        loaded = load_attachment_bytes(path=path, data_base64=None, name=spec.get("name"))
+        if isinstance(loaded, str):
+            return loaded
+        return PreparedAttachment(
+            payload=loaded,
+            file=None,
+            name=loaded.filename,
+            resolved_mime=spec.get("mime_type") or loaded.guessed_mime or "application/octet-stream",
+            size=len(loaded.raw),
+        )
+
+    loaded = load_attachment_bytes(path=None, data_base64=spec.get("data_base64"), name=spec.get("name"))
+    if isinstance(loaded, str):
+        return loaded
+    resolved_mime = spec.get("mime_type") or loaded.guessed_mime or "application/octet-stream"
+    oversized = len(loaded.raw) > BOT_API_UPLOAD_LIMIT_BYTES
+    return PreparedAttachment(
+        payload=None if oversized else loaded,
+        file=BytesIO(loaded.raw) if oversized else None,
+        name=loaded.filename,
+        resolved_mime=resolved_mime,
+        size=len(loaded.raw),
+    )
+
+
+def attachment_file_size(source: Path) -> int | None:
+    """Size of a path-backed attachment, or None when the file cannot be stated."""
+
+    try:
+        return source.stat().st_size
+    except OSError:
+        return None
+
+
+def oversized_upload_error(name: str, size: int) -> str:
+    """The error an oversized send reports when MTProto was never configured."""
+
+    return (
+        f"`{name}` is about {size // (1024 * 1024)} MB, but the Telegram Bot API uploads at most "
+        "50 MB; set `telegram.api_id` and `telegram.api_hash` in the bot config file to enable "
+        "large uploads over MTProto"
+    )
+
+
+async def deliver_oversized_attachment(
+    *,
+    context: RequestContext,
+    file: str | BytesIO,
+    name: str,
+    resolved_mime: str,
+    size: int,
+) -> dict[str, object] | str:
+    """Deliver one attachment the Bot API cannot carry, over MTProto."""
+
+    client = await mtproto_client(token=context.token)
+    if isinstance(client, str):
+        return oversized_upload_error(name, size)
+    try:
+        delivered_as = await deliver_attachment_mtproto(
+            client=client, chat_id=context.chat_id, file=file, name=name, resolved_mime=resolved_mime
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"MTProto upload failed for `{name}`: {exc}"
+    return {"name": name, "mime_type": resolved_mime, "delivered_as": delivered_as, "bytes": size}
+
+
+async def deliver_attachment_mtproto(
+    *,
+    client: TelegramClient,
+    chat_id: int,
+    file: str | BytesIO,
+    name: str,
+    resolved_mime: str,
+) -> str:
+    """Send one attachment over MTProto with the method that matches its mime type."""
+
+    kind = route_media_kind(resolved_mime)
+    attributes: list[types.TypeDocumentAttribute] = []
+    if isinstance(file, BytesIO):
+        file.name = name  # Telethon derives the stored filename from the stream's name
+    elif name != Path(file).name:
+        attributes.append(types.DocumentAttributeFilename(name))
+    match kind:
+        case "photo":
+            await client.send_file(chat_id, file)
+        case "video":
+            await client.send_file(chat_id, file, supports_streaming=True, attributes=attributes)
+        case "audio":
+            # Telethon infers audio attributes only with optional metadata parsers
+            # installed, so the attribute that makes Telegram play it as audio is set by hand.
+            attributes.append(types.DocumentAttributeAudio(0))
+            await client.send_file(chat_id, file, mime_type=resolved_mime, attributes=attributes)
+        case _:
+            await client.send_file(chat_id, file, force_document=True, mime_type=resolved_mime, attributes=attributes)
+    return kind
 
 
 def build_send_specs(
