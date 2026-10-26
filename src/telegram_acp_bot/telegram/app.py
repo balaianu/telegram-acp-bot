@@ -25,10 +25,7 @@ def build_application(
     # times instead of dropping the message immediately (the default
     # max_retries=0 causes silent message loss).
     builder = (
-        Application.builder()
-        .token(config.token)
-        .rate_limiter(AIORateLimiter(max_retries=3))
-        .concurrent_updates(True)
+        Application.builder().token(config.token).rate_limiter(AIORateLimiter(max_retries=3)).concurrent_updates(True)
     )
     if scheduler is not None:
         builder = builder.post_init(_post_init_factory(scheduler)).post_shutdown(_post_shutdown_factory(scheduler))
