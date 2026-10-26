@@ -51,7 +51,6 @@ from telegram_acp_bot.acp.models import (
     ElicitationRequest,
     FilePayload,
     ImagePayload,
-    PermissionDecisionAction,
     PermissionRequest,
     PromptFile,
     PromptImage,
@@ -1222,7 +1221,7 @@ class TelegramBridge:
                 accepted = await self._agent_service.respond_permission_request(
                     chat_id=chat_id,
                     request_id=request_id,
-                    action=cast(PermissionDecisionAction, raw_action),
+                    action=raw_action,
                 )
                 if not accepted:
                     logger.warning("Permission callback rejected: request_id=%s chat_id=%s", request_id, chat_id)

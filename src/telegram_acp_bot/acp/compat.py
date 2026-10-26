@@ -8,7 +8,7 @@ the rest of the codebase tracks either API generation.
 __all__ = ["text_block", "update_available_commands"]
 
 try:
-    from acp import text_block  # ty: ignore[unresolved-import]
+    from acp import text_block
 except ImportError:  # pragma: no cover
     from acp.schema import TextContentBlock
 
