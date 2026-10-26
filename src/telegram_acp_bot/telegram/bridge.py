@@ -245,6 +245,7 @@ class TelegramBridge:
                 workspace=parsed_args.workspace,
             )
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to list resumable sessions for chat_id=%s", chat_id)
             await self._reply(update, f"Failed to list resumable sessions: {exc}")
             return
         if candidates is None:
@@ -517,6 +518,7 @@ class TelegramBridge:
                 workspace=workspace,
             )
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to list resumable sessions for chat_id=%s", chat_id)
             await self._reply(update, f"Failed to list resumable sessions: {exc}")
             return
         if candidates is None:
@@ -1005,7 +1007,7 @@ class TelegramBridge:
             return
         dot_count = 1
         while True:
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(2.5)
             label = self._compact_status_label.get(chat_id)
             current_msg_id = self._compact_status_msg_id.get(chat_id)
             if label is None or current_msg_id != message_id:
