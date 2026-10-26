@@ -1,17 +1,16 @@
-"""Application factory and polling entrypoint for the Telegram transport."""
+"""Application factory and polling lifecycle for the Telegram transport."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, cast
 
 from telegram import Update
-from telegram.ext import AIORateLimiter, Application
+from telegram.ext import AIORateLimiter, Application, Updater
 
 from telegram_acp_bot.scheduled_tasks.scheduler import ScheduledTaskScheduler
 from telegram_acp_bot.telegram.bridge import TelegramBridge
 from telegram_acp_bot.telegram.config import BotConfig
-from telegram_acp_bot.telegram.constants import RESTART_EXIT_CODE
 
 
 def build_application(
@@ -38,19 +37,27 @@ def build_application(
     return app
 
 
-def run_polling(
-    config: BotConfig,
-    bridge: TelegramBridge,
-    scheduler: ScheduledTaskScheduler | None = None,
-) -> int:
-    if scheduler is None:
-        app = build_application(config, bridge)
-    else:
-        app = build_application(config, bridge, scheduler=scheduler)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-    if bridge._restart_requested:
-        return RESTART_EXIT_CODE
-    return 0
+async def start_application(app: Application) -> None:
+    """Bring one application up to fetching updates, in the order `run_polling` uses.
+
+    Split out of the blocking entrypoint so several applications can share one
+    event loop. `{py:func}telegram_acp_bot.runner.run_instances` drives them.
+    """
+    await app.initialize()
+    if app.post_init is not None:
+        await app.post_init(app)
+    # `build_application` always passes a token, which is what creates the updater.
+    await cast(Updater, app.updater).start_polling(allowed_updates=Update.ALL_TYPES)
+    await app.start()
+
+
+async def stop_application(app: Application) -> None:
+    """Take a started application back down, in the order `run_polling` uses."""
+    await cast(Updater, app.updater).stop()
+    await app.stop()
+    await app.shutdown()
+    if app.post_shutdown is not None:
+        await app.post_shutdown(app)
 
 
 def _post_init_factory(scheduler: ScheduledTaskScheduler) -> Callable[[Application], Coroutine[Any, Any, None]]:
