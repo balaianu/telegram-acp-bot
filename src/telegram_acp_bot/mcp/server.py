@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer as FastMCP
 
 from telegram_acp_bot.mcp.context import RequestContext, resolve_request_context
 from telegram_acp_bot.mcp.state import (

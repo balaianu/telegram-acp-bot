@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import cast
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer as FastMCP
 from telegram import Bot, InputFile
 from telethon import TelegramClient
 from telethon.tl import types
