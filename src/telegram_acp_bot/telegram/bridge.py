@@ -533,7 +533,8 @@ class TelegramBridge:
                 chat_id=chat_id,
                 workspace=parsed_args.workspace,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            logger.exception("Failed to list resumable sessions for chat_id=%s", chat_id)
             await self._reply(update, f"Failed to list resumable sessions: {exc}")
             return
         if candidates is None:
@@ -805,7 +806,8 @@ class TelegramBridge:
                 chat_id=chat_id,
                 workspace=workspace,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            logger.exception("Failed to list resumable sessions for chat_id=%s", chat_id)
             await self._reply(update, f"Failed to list resumable sessions: {exc}")
             return
         if candidates is None:
