@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import cast
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer as FastMCP
 from telegram import Bot, InputFile
 
 from telegram_acp_bot.mcp.context import resolve_request_context

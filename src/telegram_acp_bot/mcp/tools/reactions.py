@@ -5,7 +5,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Collection
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer as FastMCP
 from telegram import Bot
 from telegram.constants import ReactionEmoji
 

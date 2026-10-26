@@ -410,4 +410,3 @@ class _AcpClient:
 
     async def ext_notification(self, method: str, params: dict[str, object]) -> None:
         del method, params
-        raise RequestError.method_not_found("ext/notification")
