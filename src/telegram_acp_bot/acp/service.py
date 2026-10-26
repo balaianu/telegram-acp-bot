@@ -620,7 +620,7 @@ class AcpAgentService:
         *,
         pending: _PendingElicitation,
         answers: Mapping[str, tuple[str, ...]],
-    ) -> dict[str, object] | None:
+    ) -> dict[str, str | list[str]] | None:
         """Validate the taps against the declared options, or None when they do not answer the form."""
         for question in pending.questions:
             values = answers.get(question.field)
@@ -715,11 +715,9 @@ class AcpAgentService:
         except TimeoutError as exc:
             await self._shutdown(process)
             raise AcpHandshakeTimeoutError(self._connect_timeout) from exc
-        capabilities = (
-            initialized.agent_capabilities
-            if initialized is not None and hasattr(initialized, "agent_capabilities")
-            else AgentCapabilities()
-        )
+        capabilities = AgentCapabilities()
+        if initialized is not None and initialized.agent_capabilities is not None:
+            capabilities = initialized.agent_capabilities
         return process, connection, client, capabilities
 
     async def _list_sessions_from_connection(
