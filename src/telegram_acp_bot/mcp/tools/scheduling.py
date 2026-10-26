@@ -7,8 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from mcp.server import MCPServer as FastMCP
-
+from telegram_acp_bot.mcp.compat import FastMCP
 from telegram_acp_bot.mcp.context import resolve_request_context
 from telegram_acp_bot.scheduled_tasks import ACP_SCHEDULED_TASKS_DB_ENV, ScheduledTaskMode, ScheduledTaskStore
 from telegram_acp_bot.scheduled_tasks.store import parse_utc_timestamp

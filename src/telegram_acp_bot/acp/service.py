@@ -17,7 +17,7 @@ from typing import cast
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
-from acp import PROTOCOL_VERSION, connect_to_agent, text_block
+from acp import PROTOCOL_VERSION, connect_to_agent
 from acp.core import ClientSideConnection
 from acp.schema import (
     AcceptElicitationResponse,
@@ -42,6 +42,7 @@ from acp.schema import (
 )
 
 from telegram_acp_bot.acp.client import _AcpClient
+from telegram_acp_bot.acp.compat import text_block
 from telegram_acp_bot.acp.elicitation import elicitation_content, elicitation_form, elicitation_questions
 from telegram_acp_bot.acp.models import (
     AgentActivityBlock,
