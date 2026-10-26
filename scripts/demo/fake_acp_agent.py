@@ -54,7 +54,7 @@ from acp.schema import (
     TextContentBlock,
     ToolKind,
 )
-from demo_scenario import AgentRoute, DemoScenario, ScenarioAsset, load_demo_scenario
+from demo_scenario import AgentRoute, DemoScenario, ScenarioAsset, load_demo_scenario  # ty: ignore[unresolved-import]
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -414,7 +414,7 @@ async def _main() -> int:
     args = parse_args()
     logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO))
     scenario = load_demo_scenario(args.scenario)
-    agent = FakeDemoAcpAgent(scenario)
+    agent = FakeDemoAcpAgent(scenario)  # ty: ignore[call-non-callable]
     await run_agent(agent, use_unstable_protocol=True)
     return 0
 
